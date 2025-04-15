@@ -16,9 +16,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from collections import OrderedDict
 from wordcloud import WordCloud
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 import nltk
+from nltk.tokenize import word_tokenize
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from io import BytesIO
 
@@ -62,7 +61,8 @@ st.markdown("""
         margin-bottom: 0.75rem;
     }
     .insight-box {
-        background-color: #E3F2FD;
+        background-color: #1A237E;
+        color: white;
         border-radius: 5px;
         padding: 1rem;
         margin-bottom: 1rem;
@@ -74,8 +74,8 @@ st.markdown("""
         text-align: center;
         margin-top: 3rem;
         padding-top: 1rem;
-        border-top: 1px solid #BBDEFB;
-        color: #616161;
+        border-top: 1px solid #1565C0;
+        color: #BBDEFB;
     }
     .stTabs [data-baseweb="tab-list"] {
         gap: 24px;
@@ -83,14 +83,53 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] {
         height: 50px;
         white-space: pre-wrap;
-        background-color: #F8F9FA;
+        background-color: #0D47A1;
+        color: white;
         border-radius: 4px 4px 0px 0px;
         gap: 1px;
         padding-top: 10px;
         padding-bottom: 10px;
     }
     .stTabs [aria-selected="true"] {
-        background-color: #BBDEFB;
+        background-color: #1976D2;
+        color: white;
+    }
+    
+    /* Main background and text color */
+    .stApp {
+        background-color: #121212;
+        color: #FFFFFF;
+    }
+    
+    /* Make download buttons stand out */
+    .stDownloadButton button {
+        background-color: #1976D2 !important;
+        color: white !important;
+        font-weight: bold !important;
+        border: 1px solid #1565C0 !important;
+        padding: 10px 20px !important;
+    }
+    
+    .stDownloadButton button:hover {
+        background-color: #1565C0 !important;
+        border-color: #0D47A1 !important;
+    }
+    
+    /* Style dataframes for dark mode */
+    .stDataFrame {
+        background-color: #212121;
+    }
+    
+    /* Style form elements */
+    [data-testid="stForm"] {
+        border-color: #424242 !important;
+        background-color: #212121;
+        padding: 20px;
+    }
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background-color: #1A1A1A;
     }
 </style>
 <h1 class="main-header">PubMed Research Analyzer</h1>
@@ -373,7 +412,10 @@ def create_top_journals_chart(df):
     fig.update_layout(
         xaxis_title='Number of Publications',
         yaxis_title='Journal',
-        yaxis={'categoryorder':'total ascending'}
+        yaxis={'categoryorder':'total ascending'},
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(30,30,30,1)'
     )
     
     return fig
@@ -411,7 +453,10 @@ def create_yearly_trend_chart(df):
     
     fig.update_layout(
         xaxis_title='Publication Year',
-        yaxis_title='Number of Publications'
+        yaxis_title='Number of Publications',
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(30,30,30,1)'
     )
     
     return fig
@@ -524,7 +569,10 @@ def create_author_collaboration_network(df, top_n=20):
         margin=dict(b=20, l=5, r=5, t=40),
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        height=600
+        height=600,
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
     )
     
     return fig
@@ -540,9 +588,9 @@ def generate_wordcloud(df, column='Abstract'):
         return None
     
     # Tokenize and remove stopwords
-    stop_words = set(stopwords.words('english'))
-    custom_stopwords = {'disease', 'patient', 'treatment', 'study', 'use', 'result', 'method', 'conclusion', 'background', 'objective'}
-    stop_words.update(custom_stopwords)
+    stop_words = list(nltk.corpus.stopwords.words('english'))
+    custom_stopwords = ['disease', 'patient', 'treatment', 'study', 'use', 'result', 'method', 'conclusion', 'background', 'objective']
+    stop_words.extend(custom_stopwords)
     
     words = word_tokenize(text.lower())
     filtered_words = [word for word in words if word.isalpha() and word not in stop_words and len(word) > 2]
@@ -551,7 +599,7 @@ def generate_wordcloud(df, column='Abstract'):
     wordcloud = WordCloud(
         width=800, 
         height=400, 
-        background_color='white', 
+        background_color='black', 
         max_words=100,
         contour_width=1,
         contour_color='steelblue',
@@ -560,6 +608,7 @@ def generate_wordcloud(df, column='Abstract'):
     
     # Convert to figure
     fig, ax = plt.subplots(figsize=(10, 5))
+    plt.style.use('dark_background')
     ax.imshow(wordcloud, interpolation='bilinear')
     ax.axis('off')
     plt.tight_layout()
@@ -576,15 +625,15 @@ def generate_bigram_analysis(df, column='Abstract', top_n=15):
     if not texts:
         return None
     
-    # Remove stopwords
-    stop_words = set(stopwords.words('english'))
-    custom_stopwords = {'disease', 'patient', 'treatment', 'study', 'use', 'result', 'data'}
-    stop_words.update(custom_stopwords)
+    # Remove stopwords - use English stopwords and convert to list
+    stop_words = list(nltk.corpus.stopwords.words('english'))
+    custom_stopwords = ['disease', 'patient', 'treatment', 'study', 'use', 'result', 'data']
+    stop_words.extend(custom_stopwords)
     
     # Initialize vectorizer for bigrams
     vectorizer = CountVectorizer(
         ngram_range=(2, 2),  # bigrams
-        stop_words=stop_words,
+        stop_words="english",  # Use built-in English stopwords
         min_df=2  # minimum document frequency
     )
     
@@ -619,7 +668,10 @@ def generate_bigram_analysis(df, column='Abstract', top_n=15):
     fig.update_layout(
         xaxis_title='Frequency',
         yaxis_title='Bigram',
-        yaxis={'categoryorder':'total ascending'}
+        yaxis={'categoryorder':'total ascending'},
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(30,30,30,1)'
     )
     
     return fig
@@ -636,14 +688,9 @@ def compare_abstract_topics(df_before, df_after):
     if not texts_before or not texts_after:
         return None
     
-    # Remove stopwords
-    stop_words = set(stopwords.words('english'))
-    custom_stopwords = {'disease', 'patient', 'treatment', 'study', 'clinical', 'use', 'result', 'data'}
-    stop_words.update(custom_stopwords)
-    
-    # Initialize TF-IDF vectorizer
+    # Use English stopwords (as string)
     vectorizer = TfidfVectorizer(
-        stop_words=stop_words,
+        stop_words="english",
         max_features=1000,
         min_df=2
     )
@@ -699,7 +746,10 @@ def compare_abstract_topics(df_before, df_after):
     fig.update_layout(
         xaxis_title='TF-IDF Difference (After - Before)',
         yaxis_title='Term',
-        yaxis={'categoryorder':'total ascending'}
+        yaxis={'categoryorder':'total ascending'},
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(30,30,30,1)'
     )
     
     return fig
@@ -736,7 +786,13 @@ def journal_distribution_pie(df):
     )
     
     fig.update_traces(textposition='inside', textinfo='percent+label')
-    fig.update_layout(uniformtext_minsize=10, uniformtext_mode='hide')
+    fig.update_layout(
+        uniformtext_minsize=10, 
+        uniformtext_mode='hide',
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
     
     return fig
 
@@ -823,17 +879,31 @@ def extract_statistical_insights(df_before, df_after):
 
 def to_excel(df):
     """Convert dataframe to Excel file in memory"""
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
-        # Auto-adjust columns' width
-        worksheet = writer.sheets['Sheet1']
-        for i, col in enumerate(df.columns):
-            column_width = max(df[col].astype(str).map(len).max(), len(col))
-            worksheet.set_column(i, i, column_width +.5)
+    if df.empty:
+        # Return an empty Excel file with just headers if df is empty
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+        return output.getvalue()
+    
+    try:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+            # Auto-adjust columns' width
+            worksheet = writer.sheets['Sheet1']
+            for i, col in enumerate(df.columns):
+                column_width = max(df[col].astype(str).map(len).max(), len(col))
+                worksheet.set_column(i, i, column_width + 2)  # Add padding
         
-    processed_data = output.getvalue()
-    return processed_data
+        processed_data = output.getvalue()
+        return processed_data
+    except Exception as e:
+        st.error(f"Error creating Excel file: {str(e)}")
+        # Create a simple Excel file without formatting as fallback
+        output = BytesIO()
+        df.to_excel(output, index=False)
+        return output.getvalue()
 
 # ------------------ Main Streamlit App ------------------
 
@@ -852,6 +922,8 @@ if 'excel_before' not in st.session_state:
     st.session_state.excel_before = None
 if 'excel_after' not in st.session_state:
     st.session_state.excel_after = None
+if 'search_submitted' not in st.session_state:
+    st.session_state.search_submitted = False
 
 # Sidebar configuration
 st.sidebar.markdown("### Search Configuration")
@@ -866,9 +938,12 @@ with st.sidebar.form("search_form"):
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
     
     submitted = st.form_submit_button("Search PubMed")
+    
+    if submitted:
+        st.session_state.search_submitted = True
 
 # Process when form is submitted
-if submitted:
+if submitted or st.session_state.search_submitted:
     with st.spinner("Fetching articles from PubMed..."):
         # Convert dates
         fda_date = datetime.datetime.combine(fda_approval_date, datetime.datetime.min.time())
@@ -900,348 +975,364 @@ if submitted:
         st.code(f"Before Approval: {query_before}")
         st.code(f"After Approval: {query_after}")
         
-        # Fetch articles
-        st.write("Fetching articles for Before Approval period...")
-        progress_bar_before = st.progress(0)
-        limit_value = int(article_limit) if article_limit > 0 else None
-        records_before = fetch_pubmed_articles(
-            query_before, 
-            limit=limit_value,
-            progress_callback=lambda progress: progress_bar_before.progress(progress)
-        )
+        # Only fetch if we need to (if data not already in session state)
+        if st.session_state.df_before is None:
+            # Fetch articles
+            st.write("Fetching articles for Before Approval period...")
+            progress_bar_before = st.progress(0)
+            limit_value = int(article_limit) if article_limit > 0 else None
+            records_before = fetch_pubmed_articles(
+                query_before, 
+                limit=limit_value,
+                progress_callback=lambda progress: progress_bar_before.progress(progress)
+            )
+            
+            st.write("Fetching articles for After Approval period...")
+            progress_bar_after = st.progress(0)
+            records_after = fetch_pubmed_articles(
+                query_after, 
+                limit=limit_value,
+                progress_callback=lambda progress: progress_bar_after.progress(progress)
+            )
+            
+            # Convert to dataframes
+            df_before_raw = pd.DataFrame(records_before)
+            df_after_raw = pd.DataFrame(records_after)
+            
+            # Process and verify data
+            st.subheader("Processing and Validating Data")
+            
+            if len(df_before_raw) > 0:
+                st.write(f"Processing {len(df_before_raw)} articles from Before Approval period...")
+                df_before, stats_before = process_dataset(df_before_raw, "before", before_start_date, before_end_date)
+                st.session_state.df_before = df_before
+                st.session_state.stats_before = stats_before
+                st.session_state.excel_before = to_excel(df_before)
+            else:
+                st.warning("No articles found for Before Approval period.")
+                st.session_state.df_before = pd.DataFrame()
+                st.session_state.stats_before = {"original_rows": 0}
+                st.session_state.excel_before = to_excel(pd.DataFrame())
+            
+            if len(df_after_raw) > 0:
+                st.write(f"Processing {len(df_after_raw)} articles from After Approval period...")
+                df_after, stats_after = process_dataset(df_after_raw, "after", after_start_date, after_end_date)
+                st.session_state.df_after = df_after
+                st.session_state.stats_after = stats_after
+                st.session_state.excel_after = to_excel(df_after)
+            else:
+                st.warning("No articles found for After Approval period.")
+                st.session_state.df_after = pd.DataFrame()
+                st.session_state.stats_after = {"original_rows": 0}
+                st.session_state.excel_after = to_excel(pd.DataFrame())
+            
+            # Generate insights
+            st.session_state.insights = extract_statistical_insights(
+                st.session_state.df_before, 
+                st.session_state.df_after
+            )
+            
+            st.success("Processing complete! You can now explore the analysis tabs below.")
         
-        st.write("Fetching articles for After Approval period...")
-        progress_bar_after = st.progress(0)
-        records_after = fetch_pubmed_articles(
-            query_after, 
-            limit=limit_value,
-            progress_callback=lambda progress: progress_bar_after.progress(progress)
-        )
-        
-        # Convert to dataframes
-        df_before_raw = pd.DataFrame(records_before)
-        df_after_raw = pd.DataFrame(records_after)
-        
-        # Process and verify data
-        st.subheader("Processing and Validating Data")
-        
-        if len(df_before_raw) > 0:
-            st.write(f"Processing {len(df_before_raw)} articles from Before Approval period...")
-            df_before, stats_before = process_dataset(df_before_raw, "before", before_start_date, before_end_date)
-            st.session_state.df_before = df_before
-            st.session_state.stats_before = stats_before
-            st.session_state.excel_before = to_excel(df_before)
-        else:
-            st.warning("No articles found for Before Approval period.")
-            st.session_state.df_before = pd.DataFrame()
-            st.session_state.stats_before = {"original_rows": 0}
-            st.session_state.excel_before = to_excel(pd.DataFrame())
-        
-        if len(df_after_raw) > 0:
-            st.write(f"Processing {len(df_after_raw)} articles from After Approval period...")
-            df_after, stats_after = process_dataset(df_after_raw, "after", after_start_date, after_end_date)
-            st.session_state.df_after = df_after
-            st.session_state.stats_after = stats_after
-            st.session_state.excel_after = to_excel(df_after)
-        else:
-            st.warning("No articles found for After Approval period.")
-            st.session_state.df_after = pd.DataFrame()
-            st.session_state.stats_after = {"original_rows": 0}
-            st.session_state.excel_after = to_excel(pd.DataFrame())
-        
-        # Generate insights
-        st.session_state.insights = extract_statistical_insights(
-            st.session_state.df_before, 
-            st.session_state.df_after
-        )
-        
-        st.success("Processing complete! You can now explore the analysis tabs below.")
-
-# Display tabs for results
-if st.session_state.df_before is not None or st.session_state.df_after is not None:
-    tabs = st.tabs([
-        "📊 Data Overview", 
-        "📈 Time Trends", 
-        "🔎 Content Analysis", 
-        "👥 Author Analysis",
-        "💾 Download Data"
-    ])
-    
-    # Tab 1: Data Overview
-    with tabs[0]:
-        st.markdown("<h2 class='subheader'>Data Overview</h2>", unsafe_allow_html=True)
-        
-        # Display processing statistics
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("<h3 class='section-header'>Before Approval</h3>", unsafe_allow_html=True)
-            if st.session_state.stats_before:
-                stats = st.session_state.stats_before
-                st.write(f"Articles found: {stats.get('original_rows', 0)}")
-                if stats.get('original_rows', 0) > 0:
-                    st.write(f"Articles after date filtering: {stats.get('final_rows', 0)}")
-                    st.write(f"Invalid dates removed: {stats.get('invalid_dates', 0)}")
-                    st.write(f"Maximum author number: {stats.get('max_author', 0)}")
-                    st.write(f"Columns trimmed: {stats.get('columns_removed', 0)}")
+        # Display tabs for results
+        if st.session_state.df_before is not None or st.session_state.df_after is not None:
+            tabs = st.tabs([
+                "📊 Data Overview", 
+                "📈 Time Trends", 
+                "🔎 Content Analysis", 
+                "👥 Author Analysis",
+                "💾 Download Data"
+            ])
+            
+            # Tab 1: Data Overview
+            with tabs[0]:
+                st.markdown("<h2 class='subheader'>Data Overview</h2>", unsafe_allow_html=True)
                 
-                # Preview the data
-                if not st.session_state.df_before.empty:
-                    st.write("Data Preview:")
-                    st.dataframe(st.session_state.df_before.head(5), use_container_width=True)
-        
-        with col2:
-            st.markdown("<h3 class='section-header'>After Approval</h3>", unsafe_allow_html=True)
-            if st.session_state.stats_after:
-                stats = st.session_state.stats_after
-                st.write(f"Articles found: {stats.get('original_rows', 0)}")
-                if stats.get('original_rows', 0) > 0:
-                    st.write(f"Articles after date filtering: {stats.get('final_rows', 0)}")
-                    st.write(f"Invalid dates removed: {stats.get('invalid_dates', 0)}")
-                    st.write(f"Maximum author number: {stats.get('max_author', 0)}")
-                    st.write(f"Columns trimmed: {stats.get('columns_removed', 0)}")
+                # Display processing statistics
+                col1, col2 = st.columns(2)
                 
-                # Preview the data
-                if not st.session_state.df_after.empty:
-                    st.write("Data Preview:")
-                    st.dataframe(st.session_state.df_after.head(5), use_container_width=True)
-        
-        # Display key insights
-        st.markdown("<h3 class='section-header'>Key Insights</h3>", unsafe_allow_html=True)
-        
-        if st.session_state.insights and len(st.session_state.insights) > 0:
-            for insight in st.session_state.insights:
-                st.markdown(f"<div class='insight-box'>💡 {insight}</div>", unsafe_allow_html=True)
-        else:
-            st.info("No significant insights could be generated from the data. Try adjusting your search parameters or including more articles.")
-        
-        # Journal distribution visualizations
-        st.markdown("<h3 class='section-header'>Journal Distribution</h3>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("Before Approval:")
-            if not st.session_state.df_before.empty:
-                chart = create_top_journals_chart(st.session_state.df_before)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
+                with col1:
+                    st.markdown("<h3 class='section-header'>Before Approval</h3>", unsafe_allow_html=True)
+                    if st.session_state.stats_before:
+                        stats = st.session_state.stats_before
+                        st.write(f"Articles found: {stats.get('original_rows', 0)}")
+                        if stats.get('original_rows', 0) > 0:
+                            st.write(f"Articles after date filtering: {stats.get('final_rows', 0)}")
+                            st.write(f"Invalid dates removed: {stats.get('invalid_dates', 0)}")
+                            st.write(f"Maximum author number: {stats.get('max_author', 0)}")
+                            st.write(f"Columns trimmed: {stats.get('columns_removed', 0)}")
+                        
+                        # Preview the data
+                        if not st.session_state.df_before.empty:
+                            st.write("Data Preview:")
+                            st.dataframe(st.session_state.df_before.head(5), use_container_width=True)
+                
+                with col2:
+                    st.markdown("<h3 class='section-header'>After Approval</h3>", unsafe_allow_html=True)
+                    if st.session_state.stats_after:
+                        stats = st.session_state.stats_after
+                        st.write(f"Articles found: {stats.get('original_rows', 0)}")
+                        if stats.get('original_rows', 0) > 0:
+                            st.write(f"Articles after date filtering: {stats.get('final_rows', 0)}")
+                            st.write(f"Invalid dates removed: {stats.get('invalid_dates', 0)}")
+                            st.write(f"Maximum author number: {stats.get('max_author', 0)}")
+                            st.write(f"Columns trimmed: {stats.get('columns_removed', 0)}")
+                        
+                        # Preview the data
+                        if not st.session_state.df_after.empty:
+                            st.write("Data Preview:")
+                            st.dataframe(st.session_state.df_after.head(5), use_container_width=True)
+                
+                # Display key insights
+                st.markdown("<h3 class='section-header'>Key Insights</h3>", unsafe_allow_html=True)
+                
+                if st.session_state.insights and len(st.session_state.insights) > 0:
+                    for insight in st.session_state.insights:
+                        st.markdown(f"<div class='insight-box'>💡 {insight}</div>", unsafe_allow_html=True)
                 else:
-                    st.info("Insufficient journal data for visualization.")
-            else:
-                st.info("No data available for visualization.")
-        
-        with col2:
-            st.write("After Approval:")
-            if not st.session_state.df_after.empty:
-                chart = create_top_journals_chart(st.session_state.df_after)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
+                    st.info("No significant insights could be generated from the data. Try adjusting your search parameters or including more articles.")
+                
+                # Journal distribution visualizations
+                st.markdown("<h3 class='section-header'>Journal Distribution</h3>", unsafe_allow_html=True)
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("Before Approval:")
+                    if not st.session_state.df_before.empty:
+                        chart = create_top_journals_chart(st.session_state.df_before)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient journal data for visualization.")
+                    else:
+                        st.info("No data available for visualization.")
+                
+                with col2:
+                    st.write("After Approval:")
+                    if not st.session_state.df_after.empty:
+                        chart = create_top_journals_chart(st.session_state.df_after)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient journal data for visualization.")
+                    else:
+                        st.info("No data available for visualization.")
+            
+            # Tab 2: Time Trends
+            with tabs[1]:
+                st.markdown("<h2 class='subheader'>Publication Trends Over Time</h2>", unsafe_allow_html=True)
+                
+                # Publication trends over time
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("<h3 class='section-header'>Before Approval Trend</h3>", unsafe_allow_html=True)
+                    if not st.session_state.df_before.empty:
+                        chart = create_yearly_trend_chart(st.session_state.df_before)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient year data for trend visualization.")
+                    else:
+                        st.info("No data available for trend visualization.")
+                
+                with col2:
+                    st.markdown("<h3 class='section-header'>After Approval Trend</h3>", unsafe_allow_html=True)
+                    if not st.session_state.df_after.empty:
+                        chart = create_yearly_trend_chart(st.session_state.df_after)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient year data for trend visualization.")
+                    else:
+                        st.info("No data available for trend visualization.")
+                
+                # Journal distribution pie charts
+                st.markdown("<h3 class='section-header'>Journal Distribution Over Time</h3>", unsafe_allow_html=True)
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("Before Approval:")
+                    if not st.session_state.df_before.empty:
+                        chart = journal_distribution_pie(st.session_state.df_before)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient journal data for visualization.")
+                    else:
+                        st.info("No data available for visualization.")
+                
+                with col2:
+                    st.write("After Approval:")
+                    if not st.session_state.df_after.empty:
+                        chart = journal_distribution_pie(st.session_state.df_after)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient journal data for visualization.")
+                    else:
+                        st.info("No data available for visualization.")
+            
+            # Tab 3: Content Analysis
+            with tabs[2]:
+                st.markdown("<h2 class='subheader'>Content Analysis</h2>", unsafe_allow_html=True)
+                
+                # Word clouds
+                st.markdown("<h3 class='section-header'>Abstract Word Clouds</h3>", unsafe_allow_html=True)
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("Before Approval:")
+                    if not st.session_state.df_before.empty:
+                        fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
+                        if fig:
+                            st.pyplot(fig)
+                        else:
+                            st.info("Insufficient abstract data for word cloud.")
+                    else:
+                        st.info("No data available for word cloud.")
+                
+                with col2:
+                    st.write("After Approval:")
+                    if not st.session_state.df_after.empty:
+                        fig = generate_wordcloud(st.session_state.df_after, column='Abstract')
+                        if fig:
+                            st.pyplot(fig)
+                        else:
+                            st.info("Insufficient abstract data for word cloud.")
+                    else:
+                        st.info("No data available for word cloud.")
+                
+                # Bigram analysis
+                st.markdown("<h3 class='section-header'>Bigram Analysis</h3>", unsafe_allow_html=True)
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("Before Approval:")
+                    if not st.session_state.df_before.empty:
+                        try:
+                            chart = generate_bigram_analysis(st.session_state.df_before, column='Abstract')
+                            if chart:
+                                st.plotly_chart(chart, use_container_width=True)
+                            else:
+                                st.info("Insufficient abstract data for bigram analysis.")
+                        except Exception as e:
+                            st.error(f"Error in bigram analysis: {str(e)}")
+                            st.info("Could not generate bigram analysis due to an error.")
+                    else:
+                        st.info("No data available for bigram analysis.")
+                
+                with col2:
+                    st.write("After Approval:")
+                    if not st.session_state.df_after.empty:
+                        try:
+                            chart = generate_bigram_analysis(st.session_state.df_after, column='Abstract')
+                            if chart:
+                                st.plotly_chart(chart, use_container_width=True)
+                            else:
+                                st.info("Insufficient abstract data for bigram analysis.")
+                        except Exception as e:
+                            st.error(f"Error in bigram analysis: {str(e)}")
+                            st.info("Could not generate bigram analysis due to an error.")
+                    else:
+                        st.info("No data available for bigram analysis.")
+                
+                # Topic comparison
+                st.markdown("<h3 class='section-header'>Topic Comparison</h3>", unsafe_allow_html=True)
+                
+                if not st.session_state.df_before.empty and not st.session_state.df_after.empty:
+                    try:
+                        chart = compare_abstract_topics(st.session_state.df_before, st.session_state.df_after)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient data for topic comparison.")
+                    except Exception as e:
+                        st.error(f"Error in topic comparison: {str(e)}")
+                        st.info("Could not generate topic comparison due to an error.")
                 else:
-                    st.info("Insufficient journal data for visualization.")
-            else:
-                st.info("No data available for visualization.")
-    
-    # Tab 2: Time Trends
-    with tabs[1]:
-        st.markdown("<h2 class='subheader'>Publication Trends Over Time</h2>", unsafe_allow_html=True)
-        
-        # Publication trends over time
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("<h3 class='section-header'>Before Approval Trend</h3>", unsafe_allow_html=True)
-            if not st.session_state.df_before.empty:
-                chart = create_yearly_trend_chart(st.session_state.df_before)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient year data for trend visualization.")
-            else:
-                st.info("No data available for trend visualization.")
-        
-        with col2:
-            st.markdown("<h3 class='section-header'>After Approval Trend</h3>", unsafe_allow_html=True)
-            if not st.session_state.df_after.empty:
-                chart = create_yearly_trend_chart(st.session_state.df_after)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient year data for trend visualization.")
-            else:
-                st.info("No data available for trend visualization.")
-        
-        # Journal distribution pie charts
-        st.markdown("<h3 class='section-header'>Journal Distribution Over Time</h3>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("Before Approval:")
-            if not st.session_state.df_before.empty:
-                chart = journal_distribution_pie(st.session_state.df_before)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient journal data for visualization.")
-            else:
-                st.info("No data available for visualization.")
-        
-        with col2:
-            st.write("After Approval:")
-            if not st.session_state.df_after.empty:
-                chart = journal_distribution_pie(st.session_state.df_after)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient journal data for visualization.")
-            else:
-                st.info("No data available for visualization.")
-    
-    # Tab 3: Content Analysis
-    with tabs[2]:
-        st.markdown("<h2 class='subheader'>Content Analysis</h2>", unsafe_allow_html=True)
-        
-        # Word clouds
-        st.markdown("<h3 class='section-header'>Abstract Word Clouds</h3>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("Before Approval:")
-            if not st.session_state.df_before.empty:
-                fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
-                if fig:
-                    st.pyplot(fig)
-                else:
-                    st.info("Insufficient abstract data for word cloud.")
-            else:
-                st.info("No data available for word cloud.")
-        
-        with col2:
-            st.write("After Approval:")
-            if not st.session_state.df_after.empty:
-                fig = generate_wordcloud(st.session_state.df_after, column='Abstract')
-                if fig:
-                    st.pyplot(fig)
-                else:
-                    st.info("Insufficient abstract data for word cloud.")
-            else:
-                st.info("No data available for word cloud.")
-        
-        # Bigram analysis
-        st.markdown("<h3 class='section-header'>Bigram Analysis</h3>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("Before Approval:")
-            if not st.session_state.df_before.empty:
-                chart = generate_bigram_analysis(st.session_state.df_before, column='Abstract')
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient abstract data for bigram analysis.")
-            else:
-                st.info("No data available for bigram analysis.")
-        
-        with col2:
-            st.write("After Approval:")
-            if not st.session_state.df_after.empty:
-                chart = generate_bigram_analysis(st.session_state.df_after, column='Abstract')
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient abstract data for bigram analysis.")
-            else:
-                st.info("No data available for bigram analysis.")
-        
-        # Topic comparison
-        st.markdown("<h3 class='section-header'>Topic Comparison</h3>", unsafe_allow_html=True)
-        
-        if not st.session_state.df_before.empty and not st.session_state.df_after.empty:
-            chart = compare_abstract_topics(st.session_state.df_before, st.session_state.df_after)
-            if chart:
-                st.plotly_chart(chart, use_container_width=True)
-            else:
-                st.info("Insufficient data for topic comparison.")
-        else:
-            st.info("Data from both before and after approval periods is required for topic comparison.")
-    
-    # Tab 4: Author Analysis
-    with tabs[3]:
-        st.markdown("<h2 class='subheader'>Author Analysis</h2>", unsafe_allow_html=True)
-        
-        # Author network
-        st.markdown("<h3 class='section-header'>Author Collaboration Networks</h3>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("Before Approval:")
-            if not st.session_state.df_before.empty:
-                top_n = st.slider("Number of top authors (Before)", min_value=5, max_value=50, value=15, key="before_author_slider")
-                chart = create_author_collaboration_network(st.session_state.df_before, top_n=top_n)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient author data for collaboration network.")
-            else:
-                st.info("No data available for author analysis.")
-        
-        with col2:
-            st.write("After Approval:")
-            if not st.session_state.df_after.empty:
-                top_n = st.slider("Number of top authors (After)", min_value=5, max_value=50, value=15, key="after_author_slider")
-                chart = create_author_collaboration_network(st.session_state.df_after, top_n=top_n)
-                if chart:
-                    st.plotly_chart(chart, use_container_width=True)
-                else:
-                    st.info("Insufficient author data for collaboration network.")
-            else:
-                st.info("No data available for author analysis.")
-    
-    # Tab 5: Download Data
-    with tabs[4]:
-        st.markdown("<h2 class='subheader'>Download Processed Data</h2>", unsafe_allow_html=True)
-        
-        st.write("""
-        The processed data files below have been cleaned and optimized:
-        - Verified dates are within appropriate ranges
-        - Removed excess empty columns
-        - Formatted for easy analysis
-        """)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("<h3 class='section-header'>Before Approval Data</h3>", unsafe_allow_html=True)
-            if st.session_state.excel_before is not None:
-                if st.session_state.df_before.empty:
-                    st.info("No data available for download.")
-                else:
-                    st.download_button(
-                        label="Download Excel for Before Approval Articles",
-                        data=st.session_state.excel_before,
-                        file_name=f"{drug_name}_BeforeApproval.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        help="Download the processed data for Before Approval period"
-                    )
-                    st.write(f"Contains {len(st.session_state.df_before)} articles")
-            else:
-                st.info("Data not yet processed. Run a search first.")
-        
-        with col2:
-            st.markdown("<h3 class='section-header'>After Approval Data</h3>", unsafe_allow_html=True)
-            if st.session_state.excel_after is not None:
-                if st.session_state.df_after.empty:
-                    st.info("No data available for download.")
-                else:
-                    st.download_button(
-                        label="Download Excel for After Approval Articles",
-                        data=st.session_state.excel_after,
-                        file_name=f"{drug_name}_AfterApproval.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        help="Download the processed data for After Approval period"
-                    )
-                    st.write(f"Contains {len(st.session_state.df_after)} articles")
-            else:
-                st.info("Data not yet processed. Run a search first.")
+                    st.info("Data from both before and after approval periods is required for topic comparison.")
+            
+            # Tab 4: Author Analysis
+            with tabs[3]:
+                st.markdown("<h2 class='subheader'>Author Analysis</h2>", unsafe_allow_html=True)
+                
+                # Author network
+                st.markdown("<h3 class='section-header'>Author Collaboration Networks</h3>", unsafe_allow_html=True)
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("Before Approval:")
+                    if not st.session_state.df_before.empty:
+                        top_n = st.slider("Number of top authors (Before)", min_value=5, max_value=50, value=15, key="before_author_slider")
+                        chart = create_author_collaboration_network(st.session_state.df_before, top_n=top_n)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient author data for collaboration network.")
+                    else:
+                        st.info("No data available for author analysis.")
+                
+                with col2:
+                    st.write("After Approval:")
+                    if not st.session_state.df_after.empty:
+                        top_n = st.slider("Number of top authors (After)", min_value=5, max_value=50, value=15, key="after_author_slider")
+                        chart = create_author_collaboration_network(st.session_state.df_after, top_n=top_n)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient author data for collaboration network.")
+                    else:
+                        st.info("No data available for author analysis.")
+            
+            # Tab 5: Download Data
+            with tabs[4]:
+                st.markdown("<h2 class='subheader'>Download Processed Data</h2>", unsafe_allow_html=True)
+                
+                st.write("""
+                The processed data files below have been cleaned and optimized:
+                - Verified dates are within appropriate ranges
+                - Removed excess empty columns
+                - Formatted for easy analysis
+                """)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("<h3 class='section-header'>Before Approval Data</h3>", unsafe_allow_html=True)
+                    if st.session_state.excel_before is not None:
+                        if st.session_state.df_before.empty:
+                            st.info("No data available for download.")
+                        else:
+                            download_before = st.download_button(
+                                label="Download Excel for Before Approval Articles",
+                                data=st.session_state.excel_before,
+                                file_name=f"{drug_name}_BeforeApproval.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                help="Download the processed data for Before Approval period",
+                                key="download_before_button"
+                            )
+                            st.write(f"Contains {len(st.session_state.df_before)} articles")
+                    else:
+                        st.info("Data not yet processed. Run a search first.")
+                
+                with col2:
+                    st.markdown("<h3 class='section-header'>After Approval Data</h3>", unsafe_allow_html=True)
+                    if st.session_state.excel_after is not None:
+                        if st.session_state.df_after.empty:
+                            st.info("No data available for download.")
+                        else:
+                            download_after = st.download_button(
+                                label="Download Excel for After Approval Articles",
+                                data=st.session_state.excel_after,
+                                file_name=f"{drug_name}_AfterApproval.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                help="Download the processed data for After Approval period",
+                                key="download_after_button"
+                            )
+                            st.write(f"Contains {len(st.session_state.df_after)} articles")
+                    else:
+                        st.info("Data not yet processed. Run a search first.")
 
 # Footer
 st.markdown("""
