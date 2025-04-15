@@ -2,3 +2,11 @@ streamlit
 requests
 pandas
 xlsxwriter
+numpy
+matplotlib
+seaborn
+plotly
+nltk
+wordcloud
+scikit-learn
+openpyxl
