@@ -17,19 +17,38 @@ import plotly.graph_objects as go
 from collections import OrderedDict
 from wordcloud import WordCloud
 import nltk
-from nltk.tokenize import word_tokenize
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from io import BytesIO
 
-# Make sure nltk resources are downloaded
+# Download necessary NLTK data at the start of the application
+# This ensures the data is available in cloud environments
 try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
+    # First check if punkt is already downloaded to avoid redundant downloads
+    try:
+        nltk.data.find('tokenizers/punkt')
+        print("NLTK punkt already downloaded")
+    except LookupError:
+        print("Downloading NLTK punkt...")
+        nltk.download('punkt')
+    
+    # Check for stopwords
+    try:
+        nltk.data.find('corpora/stopwords')
+        print("NLTK stopwords already downloaded")
+    except LookupError:
+        print("Downloading NLTK stopwords...")
+        nltk.download('stopwords')
+except Exception as e:
+    st.warning(f"NLTK download error: {str(e)}. Some text analysis features may not work.")
+
+# Import NLTK components after ensuring they're downloaded
 try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords', quiet=True)
+    from nltk.tokenize import word_tokenize
+    from nltk.corpus import stopwords
+    NLTK_AVAILABLE = True
+except Exception:
+    NLTK_AVAILABLE = False
+    st.warning("NLTK components could not be loaded. Some text analysis features will be disabled.")
 
 # Set Streamlit page configuration
 st.set_page_config(
@@ -579,6 +598,10 @@ def create_author_collaboration_network(df, top_n=20):
 
 def generate_wordcloud(df, column='Abstract'):
     """Generate a word cloud from text in a specified column"""
+    if not NLTK_AVAILABLE:
+        st.warning("WordCloud generation requires NLTK which is not available.")
+        return None
+        
     if len(df) == 0 or column not in df.columns:
         return None
     
@@ -587,33 +610,45 @@ def generate_wordcloud(df, column='Abstract'):
     if not text or len(text) < 10:
         return None
     
-    # Tokenize and remove stopwords
-    stop_words = list(nltk.corpus.stopwords.words('english'))
-    custom_stopwords = ['disease', 'patient', 'treatment', 'study', 'use', 'result', 'method', 'conclusion', 'background', 'objective']
-    stop_words.extend(custom_stopwords)
-    
-    words = word_tokenize(text.lower())
-    filtered_words = [word for word in words if word.isalpha() and word not in stop_words and len(word) > 2]
-    
-    # Create word cloud
-    wordcloud = WordCloud(
-        width=800, 
-        height=400, 
-        background_color='black', 
-        max_words=100,
-        contour_width=1,
-        contour_color='steelblue',
-        colormap='Blues'
-    ).generate(' '.join(filtered_words))
-    
-    # Convert to figure
-    fig, ax = plt.subplots(figsize=(10, 5))
-    plt.style.use('dark_background')
-    ax.imshow(wordcloud, interpolation='bilinear')
-    ax.axis('off')
-    plt.tight_layout()
-    
-    return fig
+    try:
+        # Tokenize and remove stopwords
+        stop_words = list(stopwords.words('english'))
+        custom_stopwords = ['disease', 'patient', 'treatment', 'study', 'use', 'result', 'method', 'conclusion', 'background', 'objective']
+        stop_words.extend(custom_stopwords)
+        
+        # Simple tokenization without NLTK if there's an issue
+        words = [word.lower() for word in text.split()]
+        
+        # Try NLTK tokenization if available
+        try:
+            words = word_tokenize(text.lower())
+        except Exception as e:
+            st.warning(f"NLTK tokenization failed, using simple split: {str(e)}")
+            
+        filtered_words = [word for word in words if word.isalpha() and word not in stop_words and len(word) > 2]
+        
+        # Create word cloud
+        wordcloud = WordCloud(
+            width=800, 
+            height=400, 
+            background_color='black', 
+            max_words=100,
+            contour_width=1,
+            contour_color='steelblue',
+            colormap='Blues'
+        ).generate(' '.join(filtered_words))
+        
+        # Convert to figure
+        fig, ax = plt.subplots(figsize=(10, 5))
+        plt.style.use('dark_background')
+        ax.imshow(wordcloud, interpolation='bilinear')
+        ax.axis('off')
+        plt.tight_layout()
+        
+        return fig
+    except Exception as e:
+        st.warning(f"Error generating word cloud: {str(e)}")
+        return None
 
 def generate_bigram_analysis(df, column='Abstract', top_n=15):
     """Generate bigram analysis from text"""
@@ -625,56 +660,55 @@ def generate_bigram_analysis(df, column='Abstract', top_n=15):
     if not texts:
         return None
     
-    # Remove stopwords - use English stopwords and convert to list
-    stop_words = list(nltk.corpus.stopwords.words('english'))
-    custom_stopwords = ['disease', 'patient', 'treatment', 'study', 'use', 'result', 'data']
-    stop_words.extend(custom_stopwords)
-    
-    # Initialize vectorizer for bigrams
-    vectorizer = CountVectorizer(
-        ngram_range=(2, 2),  # bigrams
-        stop_words="english",  # Use built-in English stopwords
-        min_df=2  # minimum document frequency
-    )
-    
-    # Get bigram counts
-    X = vectorizer.fit_transform(texts)
-    bigram_counts = np.asarray(X.sum(axis=0)).flatten()
-    
-    # Get bigram names and counts
-    bigrams = [(word, count) for word, count in zip(vectorizer.get_feature_names_out(), bigram_counts)]
-    bigrams.sort(key=lambda x: x[1], reverse=True)
-    
-    # Extract top N bigrams
-    top_bigrams = bigrams[:top_n]
-    
-    # Create bar chart
-    if not top_bigrams:
-        return None
+    try:
+        # Initialize vectorizer for bigrams
+        vectorizer = CountVectorizer(
+            ngram_range=(2, 2),  # bigrams
+            stop_words="english",  # Use built-in English stopwords
+            min_df=2  # minimum document frequency
+        )
         
-    bigram_df = pd.DataFrame(top_bigrams, columns=['Bigram', 'Count'])
-    
-    fig = px.bar(
-        bigram_df, 
-        y='Bigram', 
-        x='Count', 
-        orientation='h',
-        title=f'Top {top_n} Bigrams in {column}',
-        height=500,
-        color='Count',
-        color_continuous_scale=px.colors.sequential.Blues
-    )
-    
-    fig.update_layout(
-        xaxis_title='Frequency',
-        yaxis_title='Bigram',
-        yaxis={'categoryorder':'total ascending'},
-        template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(30,30,30,1)'
-    )
-    
-    return fig
+        # Get bigram counts
+        X = vectorizer.fit_transform(texts)
+        bigram_counts = np.asarray(X.sum(axis=0)).flatten()
+        
+        # Get bigram names and counts
+        bigrams = [(word, count) for word, count in zip(vectorizer.get_feature_names_out(), bigram_counts)]
+        bigrams.sort(key=lambda x: x[1], reverse=True)
+        
+        # Extract top N bigrams
+        top_bigrams = bigrams[:top_n]
+        
+        # Create bar chart
+        if not top_bigrams:
+            return None
+            
+        bigram_df = pd.DataFrame(top_bigrams, columns=['Bigram', 'Count'])
+        
+        fig = px.bar(
+            bigram_df, 
+            y='Bigram', 
+            x='Count', 
+            orientation='h',
+            title=f'Top {top_n} Bigrams in {column}',
+            height=500,
+            color='Count',
+            color_continuous_scale=px.colors.sequential.Blues
+        )
+        
+        fig.update_layout(
+            xaxis_title='Frequency',
+            yaxis_title='Bigram',
+            yaxis={'categoryorder':'total ascending'},
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(30,30,30,1)'
+        )
+        
+        return fig
+    except Exception as e:
+        st.warning(f"Error in bigram analysis: {str(e)}")
+        return None
 
 def compare_abstract_topics(df_before, df_after):
     """Compare abstract topics between before and after periods"""
@@ -688,71 +722,75 @@ def compare_abstract_topics(df_before, df_after):
     if not texts_before or not texts_after:
         return None
     
-    # Use English stopwords (as string)
-    vectorizer = TfidfVectorizer(
-        stop_words="english",
-        max_features=1000,
-        min_df=2
-    )
-    
-    # Get combined TF-IDF
-    all_texts = texts_before + texts_after
-    vectorizer.fit(all_texts)
-    
-    # Transform each corpus
-    X_before = vectorizer.transform(texts_before)
-    X_after = vectorizer.transform(texts_after)
-    
-    # Get average TF-IDF for each term in each corpus
-    avg_tfidf_before = np.asarray(X_before.mean(axis=0)).flatten()
-    avg_tfidf_after = np.asarray(X_after.mean(axis=0)).flatten()
-    
-    # Get feature names
-    feature_names = vectorizer.get_feature_names_out()
-    
-    # Find differential terms (terms with largest difference in TF-IDF)
-    diff_scores = []
-    for i, term in enumerate(feature_names):
-        diff = avg_tfidf_after[i] - avg_tfidf_before[i]
-        diff_scores.append((term, diff))
-    
-    # Sort by absolute difference
-    diff_scores.sort(key=lambda x: abs(x[1]), reverse=True)
-    
-    # Get top differential terms
-    top_n = 20
-    top_diff = diff_scores[:top_n]
-    
-    # Create dataframe for visualization
-    diff_df = pd.DataFrame(top_diff, columns=['Term', 'Difference'])
-    diff_df['Period'] = ['After Approval' if d > 0 else 'Before Approval' for d in diff_df['Difference']]
-    diff_df['Abs_Difference'] = diff_df['Difference'].abs()
-    
-    # Create horizontal bar chart
-    fig = px.bar(
-        diff_df, 
-        y='Term', 
-        x='Difference',
-        orientation='h',
-        color='Period',
-        title=f'Top {top_n} Differential Terms Between Before and After Approval',
-        height=600,
-        color_discrete_map={
-            'Before Approval': '#E53935',
-            'After Approval': '#43A047'
-        }
-    )
-    
-    fig.update_layout(
-        xaxis_title='TF-IDF Difference (After - Before)',
-        yaxis_title='Term',
-        yaxis={'categoryorder':'total ascending'},
-        template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(30,30,30,1)'
-    )
-    
-    return fig
+    try:
+        # Use English stopwords (as string)
+        vectorizer = TfidfVectorizer(
+            stop_words="english",
+            max_features=1000,
+            min_df=2
+        )
+        
+        # Get combined TF-IDF
+        all_texts = texts_before + texts_after
+        vectorizer.fit(all_texts)
+        
+        # Transform each corpus
+        X_before = vectorizer.transform(texts_before)
+        X_after = vectorizer.transform(texts_after)
+        
+        # Get average TF-IDF for each term in each corpus
+        avg_tfidf_before = np.asarray(X_before.mean(axis=0)).flatten()
+        avg_tfidf_after = np.asarray(X_after.mean(axis=0)).flatten()
+        
+        # Get feature names
+        feature_names = vectorizer.get_feature_names_out()
+        
+        # Find differential terms (terms with largest difference in TF-IDF)
+        diff_scores = []
+        for i, term in enumerate(feature_names):
+            diff = avg_tfidf_after[i] - avg_tfidf_before[i]
+            diff_scores.append((term, diff))
+        
+        # Sort by absolute difference
+        diff_scores.sort(key=lambda x: abs(x[1]), reverse=True)
+        
+        # Get top differential terms
+        top_n = 20
+        top_diff = diff_scores[:top_n]
+        
+        # Create dataframe for visualization
+        diff_df = pd.DataFrame(top_diff, columns=['Term', 'Difference'])
+        diff_df['Period'] = ['After Approval' if d > 0 else 'Before Approval' for d in diff_df['Difference']]
+        diff_df['Abs_Difference'] = diff_df['Difference'].abs()
+        
+        # Create horizontal bar chart
+        fig = px.bar(
+            diff_df, 
+            y='Term', 
+            x='Difference',
+            orientation='h',
+            color='Period',
+            title=f'Top {top_n} Differential Terms Between Before and After Approval',
+            height=600,
+            color_discrete_map={
+                'Before Approval': '#E53935',
+                'After Approval': '#43A047'
+            }
+        )
+        
+        fig.update_layout(
+            xaxis_title='TF-IDF Difference (After - Before)',
+            yaxis_title='Term',
+            yaxis={'categoryorder':'total ascending'},
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(30,30,30,1)'
+        )
+        
+        return fig
+    except Exception as e:
+        st.warning(f"Error in topic comparison: {str(e)}")
+        return None
 
 def journal_distribution_pie(df):
     """Create a pie chart of journal distribution"""
@@ -1179,29 +1217,42 @@ if submitted or st.session_state.search_submitted:
                 
                 # Word clouds
                 st.markdown("<h3 class='section-header'>Abstract Word Clouds</h3>", unsafe_allow_html=True)
+                
+                # Display note about NLTK if not available
+                if not NLTK_AVAILABLE:
+                    st.warning("NLTK is not available or couldn't be properly loaded. Word clouds and some text analysis features are disabled.")
+                
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     st.write("Before Approval:")
-                    if not st.session_state.df_before.empty:
-                        fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
-                        if fig:
-                            st.pyplot(fig)
-                        else:
-                            st.info("Insufficient abstract data for word cloud.")
+                    if not st.session_state.df_before.empty and NLTK_AVAILABLE:
+                        try:
+                            fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
+                            if fig:
+                                st.pyplot(fig)
+                            else:
+                                st.info("Insufficient abstract data for word cloud.")
+                        except Exception as e:
+                            st.error(f"Error generating word cloud: {str(e)}")
+                            st.info("Could not generate word cloud due to an error.")
                     else:
-                        st.info("No data available for word cloud.")
+                        st.info("No data available for word cloud or NLTK not available.")
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty:
-                        fig = generate_wordcloud(st.session_state.df_after, column='Abstract')
-                        if fig:
-                            st.pyplot(fig)
-                        else:
-                            st.info("Insufficient abstract data for word cloud.")
+                    if not st.session_state.df_after.empty and NLTK_AVAILABLE:
+                        try:
+                            fig = generate_wordcloud(st.session_state.df_after, column='Abstract')
+                            if fig:
+                                st.pyplot(fig)
+                            else:
+                                st.info("Insufficient abstract data for word cloud.")
+                        except Exception as e:
+                            st.error(f"Error generating word cloud: {str(e)}")
+                            st.info("Could not generate word cloud due to an error.")
                     else:
-                        st.info("No data available for word cloud.")
+                        st.info("No data available for word cloud or NLTK not available.")
                 
                 # Bigram analysis
                 st.markdown("<h3 class='section-header'>Bigram Analysis</h3>", unsafe_allow_html=True)
