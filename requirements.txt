@@ -10,3 +10,4 @@ nltk
 wordcloud
 scikit-learn
 openpyxl
+tqdm

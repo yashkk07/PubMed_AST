@@ -19,36 +19,32 @@ from wordcloud import WordCloud
 import nltk
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from io import BytesIO
+import logging
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
+from openpyxl.workbook import Workbook
 
-# Download necessary NLTK data at the start of the application
-# This ensures the data is available in cloud environments
-try:
-    # First check if punkt is already downloaded to avoid redundant downloads
-    try:
-        nltk.data.find('tokenizers/punkt')
-        print("NLTK punkt already downloaded")
-    except LookupError:
-        print("Downloading NLTK punkt...")
-        nltk.download('punkt')
-    
-    # Check for stopwords
-    try:
-        nltk.data.find('corpora/stopwords')
-        print("NLTK stopwords already downloaded")
-    except LookupError:
-        print("Downloading NLTK stopwords...")
-        nltk.download('stopwords')
-except Exception as e:
-    st.warning(f"NLTK download error: {str(e)}. Some text analysis features may not work.")
+# Configure logging to file instead of displaying on screen
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                   filename='pubmed_app.log',
+                   filemode='a')
+logger = logging.getLogger('pubmed_app')
 
-# Import NLTK components after ensuring they're downloaded
+# Suppress warnings in streamlit
+st.set_option('deprecation.showPyplotGlobalUse', False)
+
+# Download necessary NLTK data silently without user-visible warnings
 try:
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
     from nltk.tokenize import word_tokenize
     from nltk.corpus import stopwords
     NLTK_AVAILABLE = True
-except Exception:
+    logger.info("NLTK resources loaded successfully")
+except Exception as e:
     NLTK_AVAILABLE = False
-    st.warning("NLTK components could not be loaded. Some text analysis features will be disabled.")
+    logger.error(f"NLTK error: {str(e)}")
 
 # Set Streamlit page configuration
 st.set_page_config(
@@ -150,6 +146,14 @@ st.markdown("""
     [data-testid="stSidebar"] {
         background-color: #1A1A1A;
     }
+    
+    /* Hide streamlit warnings/errors */
+    [data-testid="stSidebar"] [data-testid="stException"] {
+        display: none;
+    }
+    div[data-testid="stStatusWidget"] {
+        display: none;
+    }
 </style>
 <h1 class="main-header">PubMed Research Analyzer</h1>
 <p class="text-centered">Extract, analyze, and download PubMed articles before and after FDA approval.</p>
@@ -178,21 +182,120 @@ def getTextFromNode(root, path, default=""):
     node = root.find(path)
     return node.text.strip() if node is not None and node.text is not None else default
 
+def parse_month(month_str):
+    """
+    Convert month string to numeric month value (1-12).
+    Handles numeric strings, full month names, and abbreviations.
+    """
+    if not month_str:
+        return "1"  # Default to January if no month
+    
+    # If already numeric
+    if month_str.isdigit():
+        month_num = int(month_str)
+        if 1 <= month_num <= 12:
+            return str(month_num)
+    
+    # If it's a text month name
+    month_str = month_str.strip().lower()
+    month_map = {
+        'jan': '1', 'january': '1',
+        'feb': '2', 'february': '2',
+        'mar': '3', 'march': '3',
+        'apr': '4', 'april': '4',
+        'may': '5',
+        'jun': '6', 'june': '6',
+        'jul': '7', 'july': '7',
+        'aug': '8', 'august': '8',
+        'sep': '9', 'september': '9', 'sept': '9',
+        'oct': '10', 'october': '10',
+        'nov': '11', 'november': '11',
+        'dec': '12', 'december': '12'
+    }
+    
+    for abbr, num in month_map.items():
+        if month_str.startswith(abbr):
+            return num
+    
+    # If we couldn't determine the month, default to January
+    return "1"
+
 # ------------------ Processing Each Article ------------------
 
 def process_article(article):
     """
     Given an XML element for a PubMed article, extract basic information and author details
+    with full publication date precision.
     """
     record = OrderedDict()
     record["PMID"] = getTextFromNode(article, "./MedlineCitation/PMID", "")
     record["JournalTitle"] = getTextFromNode(article, "./MedlineCitation/Article/Journal/Title", "")
     record["ArticleTitle"] = getTextFromNode(article, "./MedlineCitation/Article/ArticleTitle", "")
     
+    # Extract full publication date information - first try ArticleDate
     pub_year = getTextFromNode(article, "./MedlineCitation/Article/ArticleDate/Year", "")
+    pub_month = getTextFromNode(article, "./MedlineCitation/Article/ArticleDate/Month", "")
+    pub_day = getTextFromNode(article, "./MedlineCitation/Article/ArticleDate/Day", "")
+    
+    # If ArticleDate is not available, try JournalIssue/PubDate
     if not pub_year:
         pub_year = getTextFromNode(article, "./MedlineCitation/Article/Journal/JournalIssue/PubDate/Year", "")
+        pub_month = getTextFromNode(article, "./MedlineCitation/Article/Journal/JournalIssue/PubDate/Month", "")
+        pub_day = getTextFromNode(article, "./MedlineCitation/Article/Journal/JournalIssue/PubDate/Day", "")
+    
+    # If still no month, try MedlineDate which might contain a string like "2014 Mar-Apr"
+    if not pub_month:
+        medline_date = getTextFromNode(article, "./MedlineCitation/Article/Journal/JournalIssue/PubDate/MedlineDate", "")
+        if medline_date:
+            # Try to extract year and month from strings like "2014 Mar-Apr" or "2023 Jan"
+            parts = medline_date.split()
+            if len(parts) >= 2 and parts[0].isdigit():
+                pub_year = parts[0]
+                month_part = parts[1].split('-')[0]  # Take first month if range
+                pub_month = parse_month(month_part)
+    
+    # If year is missing or invalid, try to extract from other fields
+    if not pub_year:
+        pub_date = getTextFromNode(article, "./MedlineCitation/Article/Journal/JournalIssue/PubDate/MedlineDate", "")
+        if pub_date:
+            # Try to extract just the year from any date string
+            year_match = re.search(r'\b(19|20)\d{2}\b', pub_date)
+            if year_match:
+                pub_year = year_match.group(0)
+    
+    # Clean and convert months to standardized format
+    pub_month = parse_month(pub_month)
+    
+    # Default day to 1 if not available
+    if not pub_day or not pub_day.isdigit():
+        pub_day = "1"
+    
+    # Store full date components
     record["PublicationYear"] = pub_year
+    record["PublicationMonth"] = pub_month
+    record["PublicationDay"] = pub_day
+    
+    # Create a full date string in format "YYYY-MM-DD"
+    try:
+        year = int(pub_year) if pub_year else 0
+        month = int(pub_month) if pub_month else 1
+        day = int(pub_day) if pub_day else 1
+        
+        if year > 0:
+            # Ensure valid month (1-12)
+            month = max(1, min(12, month))
+            # Ensure valid day (1-31 depending on month)
+            max_days = [31, 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28, 
+                       31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+            day = max(1, min(max_days[month-1], day))
+            
+            # Format the date
+            record["PublicationDate"] = f"{year:04d}-{month:02d}-{day:02d}"
+        else:
+            record["PublicationDate"] = ""
+    except (ValueError, TypeError):
+        # If any conversion fails, store empty string
+        record["PublicationDate"] = ""
     
     abstracts = article.findall("./MedlineCitation/Article/Abstract/AbstractText")
     if abstracts:
@@ -282,29 +385,41 @@ def fetch_pubmed_articles(query, batch_size=BATCH_NUM, limit=None, progress_call
             
         time.sleep(0.34)  # Respect rate limits
     return records
-
 # ------------------ Data Verification Functions ------------------
 
 def check_date_range(df, dataset_type, start_date, end_date):
     """
-    Check if dates are within the expected range.
+    Check if dates are within the expected range using full publication date.
     For records with missing or invalid dates, we'll keep them.
     Returns the count of invalid dates found.
     """
     invalid_count = 0
     rows_to_drop = []
     
+    # Month name to number mapping (both full names and abbreviations)
+    month_map = {
+        'jan': 1, 'january': 1,
+        'feb': 2, 'february': 2,
+        'mar': 3, 'march': 3,
+        'apr': 4, 'april': 4,
+        'may': 5,
+        'jun': 6, 'june': 6,
+        'jul': 7, 'july': 7,
+        'aug': 8, 'august': 8,
+        'sep': 9, 'september': 9, 'sept': 9,
+        'oct': 10, 'october': 10,
+        'nov': 11, 'november': 11,
+        'dec': 12, 'december': 12
+    }
+    
     for idx, row in df.iterrows():
-        # Skip if no publication year
-        if pd.isna(row.get('PublicationYear', None)) or row.get('PublicationYear', '') == '':
+        # Skip if no publication date info
+        if pd.isna(row.get('PublicationDate', None)) or row.get('PublicationDate', '') == '':
             continue
             
         try:
-            # Try to convert the year to integer
-            year = int(row['PublicationYear'])
-            
-            # Create a date object (use January 1 as default)
-            pub_date = datetime.datetime(year, 1, 1)
+            # Try to parse the date
+            pub_date = datetime.datetime.strptime(row['PublicationDate'], "%Y-%m-%d")
             
             # Check if date is outside the expected range
             if dataset_type == "before" and (pub_date < start_date or pub_date > end_date):
@@ -402,6 +517,46 @@ def process_dataset(df, dataset_type, start_date, end_date):
         "columns_removed": original_column_count - len(df.columns)
     }
 
+def verify_dates_and_recategorize(records_before, records_after, fda_date):
+    """
+    Double-check dates and move articles to the correct category.
+    Returns verified before/after records lists and counts of moved articles.
+    """
+    verified_before = []
+    verified_after = []
+    moved_to_before = 0
+    moved_to_after = 0
+    
+    # Process "before" records
+    for record in records_before:
+        try:
+            if record["PublicationDate"]:
+                pub_date = datetime.datetime.strptime(record["PublicationDate"], "%Y-%m-%d")
+                if pub_date > fda_date:
+                    verified_after.append(record)
+                    moved_to_after += 1
+                else:
+                    verified_before.append(record)
+        except (ValueError, TypeError):
+            # If we can't parse the date, keep it in the original category
+            verified_before.append(record)
+    
+    # Process "after" records
+    for record in records_after:
+        try:
+            if record["PublicationDate"]:
+                pub_date = datetime.datetime.strptime(record["PublicationDate"], "%Y-%m-%d")
+                if pub_date <= fda_date:
+                    verified_before.append(record)
+                    moved_to_before += 1
+                else:
+                    verified_after.append(record)
+        except (ValueError, TypeError):
+            # If we can't parse the date, keep it in the original category
+            verified_after.append(record)
+    
+    return verified_before, verified_after, moved_to_before, moved_to_after
+
 # ------------------ Data Analysis Functions ------------------
 
 def create_top_journals_chart(df):
@@ -477,6 +632,57 @@ def create_yearly_trend_chart(df):
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(30,30,30,1)'
     )
+    
+    return fig
+
+def create_monthly_trend_chart(df):
+    """Create a line chart showing publication trends by month"""
+    if len(df) == 0 or 'PublicationYear' not in df.columns or 'PublicationMonth' not in df.columns:
+        return None
+    
+    # Convert publication year and month to numeric values
+    df_date = df.copy()
+    df_date['PublicationYear'] = pd.to_numeric(df_date['PublicationYear'], errors='coerce')
+    df_date['PublicationMonth'] = pd.to_numeric(df_date['PublicationMonth'], errors='coerce')
+    
+    # Drop rows with missing year or month
+    df_date = df_date.dropna(subset=['PublicationYear', 'PublicationMonth'])
+    
+    if len(df_date) == 0:
+        return None
+    
+    # Create date strings in format "YYYY-MM" for sorting
+    df_date['YearMonth'] = df_date.apply(
+        lambda row: f"{int(row['PublicationYear']):04d}-{int(row['PublicationMonth']):02d}", 
+        axis=1
+    )
+    
+    # Count by year-month
+    date_counts = df_date['YearMonth'].value_counts().reset_index()
+    date_counts.columns = ['YearMonth', 'Count']
+    date_counts = date_counts.sort_values('YearMonth')
+    
+    # Create line chart
+    fig = px.line(
+        date_counts, 
+        x='YearMonth', 
+        y='Count',
+        markers=True,
+        title='Publication Trend by Month',
+        height=400
+    )
+    
+    fig.update_layout(
+        xaxis_title='Publication Month',
+        yaxis_title='Number of Publications',
+        xaxis={'type': 'category'},  # Treat as categorical to show all months
+        template="plotly_dark",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(30,30,30,1)'
+    )
+    
+    # Rotate x-axis labels for better readability
+    fig.update_xaxes(tickangle=45)
     
     return fig
 
@@ -598,34 +804,48 @@ def create_author_collaboration_network(df, top_n=20):
 
 def generate_wordcloud(df, column='Abstract'):
     """Generate a word cloud from text in a specified column"""
-    if not NLTK_AVAILABLE:
-        st.warning("WordCloud generation requires NLTK which is not available.")
-        return None
-        
     if len(df) == 0 or column not in df.columns:
         return None
     
-    # Combine all text
-    text = ' '.join(df[column].dropna().astype(str))
-    if not text or len(text) < 10:
-        return None
-    
     try:
-        # Tokenize and remove stopwords
-        stop_words = list(stopwords.words('english'))
-        custom_stopwords = ['disease', 'patient', 'treatment', 'study', 'use', 'result', 'method', 'conclusion', 'background', 'objective']
-        stop_words.extend(custom_stopwords)
+        # Combine all text
+        text = ' '.join(df[column].dropna().astype(str))
+        if not text or len(text) < 10:
+            return None
         
-        # Simple tokenization without NLTK if there's an issue
-        words = [word.lower() for word in text.split()]
+        # Simple tokenization without NLTK
+        all_words = text.lower().split()
         
-        # Try NLTK tokenization if available
+        # Try to use NLTK if available
         try:
-            words = word_tokenize(text.lower())
-        except Exception as e:
-            st.warning(f"NLTK tokenization failed, using simple split: {str(e)}")
-            
-        filtered_words = [word for word in words if word.isalpha() and word not in stop_words and len(word) > 2]
+            if NLTK_AVAILABLE:
+                stop_words = list(stopwords.words('english'))
+                custom_stopwords = ['disease', 'patient', 'treatment', 'study', 'use', 'result', 
+                                   'method', 'conclusion', 'background', 'objective']
+                stop_words.extend(custom_stopwords)
+                all_words = word_tokenize(text.lower())
+            else:
+                # Fallback stopwords
+                stop_words = ['a', 'an', 'the', 'and', 'or', 'but', 'if', 'because', 'as', 'what',
+                            'when', 'where', 'how', 'who', 'which', 'this', 'that', 'these', 'those',
+                            'then', 'just', 'so', 'than', 'such', 'both', 'through', 'about', 'for',
+                            'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+                            'having', 'do', 'does', 'did', 'doing', 'to', 'from', 'in', 'out', 'on',
+                            'off', 'over', 'under', 'with', 'by', 'of', 'at', 'into', 'during', 'before',
+                            'after', 'above', 'below', 'up', 'down', 'can', 'could', 'will', 'would',
+                            'may', 'might', 'must', 'should', 'not', 'no', 'nor', 'only', 'own', 'same',
+                            'too', 'very', 'disease', 'patient', 'treatment', 'study', 'use', 'result']
+        except Exception:
+            # If everything fails, use basic fallback
+            stop_words = ['a', 'an', 'the', 'and', 'or', 'but', 'if', 'disease', 'patient']
+        
+        # Filter words
+        filtered_words = [word for word in all_words if word.isalpha() and word not in stop_words and len(word) > 2]
+        
+        # If we don't have enough words after filtering, return None
+        if len(filtered_words) < 10:
+            logger.warning("Not enough words for wordcloud after filtering")
+            return None
         
         # Create word cloud
         wordcloud = WordCloud(
@@ -647,7 +867,7 @@ def generate_wordcloud(df, column='Abstract'):
         
         return fig
     except Exception as e:
-        st.warning(f"Error generating word cloud: {str(e)}")
+        logger.error(f"Error generating wordcloud: {str(e)}")
         return None
 
 def generate_bigram_analysis(df, column='Abstract', top_n=15):
@@ -655,12 +875,12 @@ def generate_bigram_analysis(df, column='Abstract', top_n=15):
     if len(df) == 0 or column not in df.columns:
         return None
     
-    # Combine all text
-    texts = df[column].dropna().astype(str).tolist()
-    if not texts:
-        return None
-    
     try:
+        # Combine all text
+        texts = df[column].dropna().astype(str).tolist()
+        if not texts:
+            return None
+        
         # Initialize vectorizer for bigrams
         vectorizer = CountVectorizer(
             ngram_range=(2, 2),  # bigrams
@@ -707,7 +927,7 @@ def generate_bigram_analysis(df, column='Abstract', top_n=15):
         
         return fig
     except Exception as e:
-        st.warning(f"Error in bigram analysis: {str(e)}")
+        logger.error(f"Error in bigram analysis: {str(e)}")
         return None
 
 def compare_abstract_topics(df_before, df_after):
@@ -715,14 +935,14 @@ def compare_abstract_topics(df_before, df_after):
     if len(df_before) == 0 or len(df_after) == 0 or 'Abstract' not in df_before.columns or 'Abstract' not in df_after.columns:
         return None
     
-    # Get abstracts
-    texts_before = df_before['Abstract'].dropna().astype(str).tolist()
-    texts_after = df_after['Abstract'].dropna().astype(str).tolist()
-    
-    if not texts_before or not texts_after:
-        return None
-    
     try:
+        # Get abstracts
+        texts_before = df_before['Abstract'].dropna().astype(str).tolist()
+        texts_after = df_after['Abstract'].dropna().astype(str).tolist()
+        
+        if not texts_before or not texts_after:
+            return None
+        
         # Use English stopwords (as string)
         vectorizer = TfidfVectorizer(
             stop_words="english",
@@ -789,7 +1009,7 @@ def compare_abstract_topics(df_before, df_after):
         
         return fig
     except Exception as e:
-        st.warning(f"Error in topic comparison: {str(e)}")
+        logger.error(f"Error in topic comparison: {str(e)}")
         return None
 
 def journal_distribution_pie(df):
@@ -797,134 +1017,320 @@ def journal_distribution_pie(df):
     if len(df) == 0 or 'JournalTitle' not in df.columns:
         return None
     
-    # Get journal counts
-    journal_counts = df['JournalTitle'].value_counts().reset_index()
-    journal_counts.columns = ['Journal', 'Count']
-    
-    # Keep top 8 journals, group others
-    top_n = min(8, len(journal_counts))
-    if len(journal_counts) > top_n:
-        top_journals = journal_counts.head(top_n)
-        other_count = journal_counts.iloc[top_n:]['Count'].sum()
-        top_journals = pd.concat([
+    try:
+        # Get journal counts
+        journal_counts = df['JournalTitle'].value_counts().reset_index()
+        journal_counts.columns = ['Journal', 'Count']
+        
+        # Keep top 8 journals, group others
+        top_n = min(8, len(journal_counts))
+        if len(journal_counts) > top_n:
+            top_journals = journal_counts.head(top_n)
+            other_count = journal_counts.iloc[top_n:]['Count'].sum()
+            top_journals = pd.concat([
+                top_journals, 
+                pd.DataFrame({'Journal': ['Other Journals'], 'Count': [other_count]})
+            ])
+        else:
+            top_journals = journal_counts
+        
+        # Create pie chart
+        fig = px.pie(
             top_journals, 
-            pd.DataFrame({'Journal': ['Other Journals'], 'Count': [other_count]})
-        ])
-    else:
-        top_journals = journal_counts
-    
-    # Create pie chart
-    fig = px.pie(
-        top_journals, 
-        values='Count', 
-        names='Journal',
-        title='Distribution of Publications by Journal',
-        hole=0.4,
-        color_discrete_sequence=px.colors.qualitative.Set2
-    )
-    
-    fig.update_traces(textposition='inside', textinfo='percent+label')
-    fig.update_layout(
-        uniformtext_minsize=10, 
-        uniformtext_mode='hide',
-        template="plotly_dark",
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
-    
-    return fig
+            values='Count', 
+            names='Journal',
+            title='Distribution of Publications by Journal',
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+        
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        fig.update_layout(
+            uniformtext_minsize=10, 
+            uniformtext_mode='hide',
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
+        
+        return fig
+    except Exception as e:
+        logger.error(f"Error creating journal pie chart: {str(e)}")
+        return None
 
 def extract_statistical_insights(df_before, df_after):
     """Extract key statistical insights from the datasets"""
     insights = []
     
-    # 1. Publication volume
-    before_count = len(df_before)
-    after_count = len(df_after)
-    
-    if before_count > 0 and after_count > 0:
-        percent_change = ((after_count - before_count) / before_count) * 100
-        change_direction = "increase" if percent_change > 0 else "decrease"
+    try:
+        # 1. Publication volume
+        before_count = len(df_before)
+        after_count = len(df_after)
         
-        insights.append(f"Publication volume showed a {abs(percent_change):.1f}% {change_direction} after FDA approval ({after_count} vs. {before_count} publications).")
-    
-    # 2. Journal diversity
-    if 'JournalTitle' in df_before.columns and 'JournalTitle' in df_after.columns:
-        unique_journals_before = df_before['JournalTitle'].nunique()
-        unique_journals_after = df_after['JournalTitle'].nunique()
-        
-        if unique_journals_before > 0 and unique_journals_after > 0:
-            journal_percent_change = ((unique_journals_after - unique_journals_before) / unique_journals_before) * 100
-            journal_change_direction = "more diverse" if journal_percent_change > 0 else "less diverse"
+        if before_count > 0 and after_count > 0:
+            percent_change = ((after_count - before_count) / before_count) * 100
+            change_direction = "increase" if percent_change > 0 else "decrease"
             
-            insights.append(f"Research became {journal_change_direction} after approval with {unique_journals_after} journals compared to {unique_journals_before} before.")
-    
-    # 3. Author count
-    author_cols_before = [col for col in df_before.columns if col.startswith('Author')]
-    author_cols_after = [col for col in df_after.columns if col.startswith('Author')]
-    
-    avg_authors_before = 0
-    avg_authors_after = 0
-    
-    if author_cols_before:
-        # Count non-empty author cells per row
-        authors_per_paper_before = df_before[author_cols_before].notna().sum(axis=1)
-        avg_authors_before = authors_per_paper_before.mean()
-    
-    if author_cols_after:
-        authors_per_paper_after = df_after[author_cols_after].notna().sum(axis=1)
-        avg_authors_after = authors_per_paper_after.mean()
-    
-    if avg_authors_before > 0 and avg_authors_after > 0:
-        author_change = avg_authors_after - avg_authors_before
-        author_direction = "more" if author_change > 0 else "fewer"
+            insights.append(f"Publication volume showed a {abs(percent_change):.1f}% {change_direction} after FDA approval ({after_count} vs. {before_count} publications).")
         
-        insights.append(f"Research papers had {author_direction} authors on average after approval ({avg_authors_after:.1f} vs. {avg_authors_before:.1f} authors per paper).")
-    
-    # 4. Abstract length and complexity
-    if 'Abstract' in df_before.columns and 'Abstract' in df_after.columns:
-        # Average abstract length
-        abstract_length_before = df_before['Abstract'].str.len().mean()
-        abstract_length_after = df_after['Abstract'].str.len().mean()
-        
-        if not pd.isna(abstract_length_before) and not pd.isna(abstract_length_after):
-            length_change = ((abstract_length_after - abstract_length_before) / abstract_length_before) * 100
-            length_direction = "longer" if length_change > 0 else "shorter"
+        # 2. Journal diversity
+        if 'JournalTitle' in df_before.columns and 'JournalTitle' in df_after.columns:
+            unique_journals_before = df_before['JournalTitle'].nunique()
+            unique_journals_after = df_after['JournalTitle'].nunique()
             
-            insights.append(f"Abstracts became {abs(length_change):.1f}% {length_direction} after approval ({abstract_length_after:.0f} vs. {abstract_length_before:.0f} characters on average).")
-    
-    # 5. Publication year span
-    if 'PublicationYear' in df_before.columns and 'PublicationYear' in df_after.columns:
-        df_before_year = df_before.copy()
-        df_after_year = df_after.copy()
+            if unique_journals_before > 0 and unique_journals_after > 0:
+                journal_percent_change = ((unique_journals_after - unique_journals_before) / unique_journals_before) * 100
+                journal_change_direction = "more diverse" if journal_percent_change > 0 else "less diverse"
+                
+                insights.append(f"Research became {journal_change_direction} after approval with {unique_journals_after} journals compared to {unique_journals_before} before.")
         
-        # Convert to numeric
-        df_before_year['PublicationYear'] = pd.to_numeric(df_before_year['PublicationYear'], errors='coerce')
-        df_after_year['PublicationYear'] = pd.to_numeric(df_after_year['PublicationYear'], errors='coerce')
+        # 3. Author count
+        author_cols_before = [col for col in df_before.columns if col.startswith('Author')]
+        author_cols_after = [col for col in df_after.columns if col.startswith('Author')]
         
-        # Get year ranges
-        before_min_year = df_before_year['PublicationYear'].min()
-        before_max_year = df_before_year['PublicationYear'].max()
-        after_min_year = df_after_year['PublicationYear'].min()
-        after_max_year = df_after_year['PublicationYear'].max()
+        avg_authors_before = 0
+        avg_authors_after = 0
         
-        if not pd.isna(before_min_year) and not pd.isna(before_max_year) and not pd.isna(after_min_year) and not pd.isna(after_max_year):
-            insights.append(f"Before approval research spans {before_max_year - before_min_year + 1} years ({before_min_year:.0f}-{before_max_year:.0f}), while after approval spans {after_max_year - after_min_year + 1} years ({after_min_year:.0f}-{after_max_year:.0f}).")
-    
+        if author_cols_before:
+            # Count non-empty author cells per row
+            authors_per_paper_before = df_before[author_cols_before].notna().sum(axis=1)
+            avg_authors_before = authors_per_paper_before.mean()
+        
+        if author_cols_after:
+            authors_per_paper_after = df_after[author_cols_after].notna().sum(axis=1)
+            avg_authors_after = authors_per_paper_after.mean()
+        
+        if avg_authors_before > 0 and avg_authors_after > 0:
+            author_change = avg_authors_after - avg_authors_before
+            author_direction = "more" if author_change > 0 else "fewer"
+            
+            insights.append(f"Research papers had {author_direction} authors on average after approval ({avg_authors_after:.1f} vs. {avg_authors_before:.1f} authors per paper).")
+        
+        # 4. Abstract length and complexity
+        if 'Abstract' in df_before.columns and 'Abstract' in df_after.columns:
+            # Average abstract length
+            abstract_length_before = df_before['Abstract'].str.len().mean()
+            abstract_length_after = df_after['Abstract'].str.len().mean()
+            
+            if not pd.isna(abstract_length_before) and not pd.isna(abstract_length_after):
+                length_change = ((abstract_length_after - abstract_length_before) / abstract_length_before) * 100
+                length_direction = "longer" if length_change > 0 else "shorter"
+                
+                insights.append(f"Abstracts became {abs(length_change):.1f}% {length_direction} after approval ({abstract_length_after:.0f} vs. {abstract_length_before:.0f} characters on average).")
+        
+        # 5. Publication year span
+        if 'PublicationDate' in df_before.columns and 'PublicationDate' in df_after.columns:
+            # Extract years from the full date string
+            df_before_year = df_before.copy()
+            df_after_year = df_after.copy()
+            
+            df_before_year['Year'] = df_before_year['PublicationDate'].str[:4].astype(float, errors='ignore')
+            df_after_year['Year'] = df_after_year['PublicationDate'].str[:4].astype(float, errors='ignore')
+            
+            # Get year ranges
+            before_min_year = df_before_year['Year'].min()
+            before_max_year = df_before_year['Year'].max()
+            after_min_year = df_after_year['Year'].min()
+            after_max_year = df_after_year['Year'].max()
+            
+            if not pd.isna(before_min_year) and not pd.isna(before_max_year) and not pd.isna(after_min_year) and not pd.isna(after_max_year):
+                insights.append(f"Before approval research spans {before_max_year - before_min_year + 1:.0f} years ({before_min_year:.0f}-{before_max_year:.0f}), while after approval spans {after_max_year - after_min_year + 1:.0f} years ({after_min_year:.0f}-{after_max_year:.0f}).")
+        
+    except Exception as e:
+        logger.error(f"Error generating insights: {str(e)}")
+        
     return insights
 
 # ------------------ File Conversion Functions ------------------
 
-def to_excel(df):
-    """Convert dataframe to Excel file in memory"""
+def create_hierarchical_excel(df):
+    """
+    Create a hierarchical Excel file with authors as sub-rows.
+    
+    The Excel will have:
+    - Main rows for article details
+    - Sub-rows for each author and their affiliation
+    - Merged cells for article details across all sub-rows
+    
+    Returns the Excel file as bytes.
+    """
     if df.empty:
         # Return an empty Excel file with just headers if df is empty
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sheet1')
+        pd.DataFrame(columns=['No Data Available']).to_excel(output, index=False)
         return output.getvalue()
     
+    # Identify non-author columns and author-related columns
+    author_pattern = re.compile(r"^Author(\d+)$")
+    affiliation_pattern = re.compile(r"^Affiliation(\d+)$")
+    
+    article_columns = []
+    for col in df.columns:
+        if not author_pattern.match(col) and not affiliation_pattern.match(col):
+            article_columns.append(col)
+    
+    # Get all author-affiliation pairs
+    author_data = []
+    for _, row in df.iterrows():
+        article_info = {col: row[col] for col in article_columns}
+        
+        authors = []
+        for i in range(1, 100):  # Assuming no more than 100 authors
+            author_col = f"Author{i}"
+            affiliation_col = f"Affiliation{i}"
+            
+            if author_col not in df.columns:
+                break
+                
+            if pd.notna(row.get(author_col)) and row.get(author_col) != '':
+                author_info = {
+                    'Author': row.get(author_col, ''),
+                    'Affiliation': row.get(affiliation_col, '')
+                }
+                authors.append(author_info)
+        
+        if authors:
+            author_data.append({
+                'article': article_info,
+                'authors': authors
+            })
+    
+    # Create a new dataframe with the hierarchical structure
+    rows = []
+    
+    for article in author_data:
+        article_info = article['article']
+        authors = article['authors']
+        
+        for i, author in enumerate(authors):
+            row = {}
+            
+            # Only include article info in the first author row
+            if i == 0:
+                for col in article_columns:
+                    row[col] = article_info.get(col, '')
+            else:
+                for col in article_columns:
+                    row[col] = ''  # Empty for merged cells
+            
+            row['Author'] = author['Author']
+            row['Affiliation'] = author['Affiliation']
+            rows.append(row)
+    
+    # Create a new DataFrame with the hierarchical structure
+    columns = article_columns + ['Author', 'Affiliation']
+    hierarchical_df = pd.DataFrame(rows, columns=columns)
+    
+    # Create Excel in memory
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='openpyxl')
+    hierarchical_df.to_excel(writer, index=False, sheet_name='Articles')
+    
+    # Get the worksheet
+    worksheet = writer.sheets['Articles']
+    
+    # Define styles
+    header_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+    alt_row_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    header_font = Font(bold=True)
+    centered_alignment = Alignment(horizontal='center', vertical='center')
+    wrapped_alignment = Alignment(vertical='center', wrap_text=True)
+    thin_border = Side(style='thin')
+    border = Border(left=thin_border, right=thin_border, top=thin_border, bottom=thin_border)
+    
+    # Format header row
+    for col_idx, col_name in enumerate(hierarchical_df.columns, 1):
+        cell = worksheet.cell(row=1, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = centered_alignment
+        cell.border = border
+    
+    # Track where each article starts and ends
+    article_ranges = []
+    current_start = 2  # Start from row 2 (after header)
+    current_pmid = None
+    
+    for row_idx, row in enumerate(hierarchical_df.iterrows(), 2):  # Start from row 2
+        row_data = row[1]  # Get the row data
+        pmid = row_data.get('PMID', '')
+        
+        if pmid and pmid != current_pmid:
+            if current_pmid is not None:
+                article_ranges.append((current_start, row_idx - 1))
+            current_start = row_idx
+            current_pmid = pmid
+    
+    # Add the last article range
+    if current_pmid is not None:
+        article_ranges.append((current_start, row_idx))
+    
+    # Apply alternating row colors for each article group
+    is_alt_row = False
+    for start_row, end_row in article_ranges:
+        if is_alt_row:
+            for row in range(start_row, end_row + 1):
+                for col in range(1, len(hierarchical_df.columns) + 1):
+                    worksheet.cell(row=row, column=col).fill = alt_row_fill
+        is_alt_row = not is_alt_row
+    
+    # Merge cells for each article
+    for start_row, end_row in article_ranges:
+        if start_row == end_row:
+            continue  # No need to merge for single-author articles
+        
+        for col_idx, col_name in enumerate(article_columns, 1):
+            # Get column letter
+            col_letter = get_column_letter(col_idx)
+            # Merge cells
+            worksheet.merge_cells(f"{col_letter}{start_row}:{col_letter}{end_row}")
+            # Center the content vertically
+            cell = worksheet.cell(row=start_row, column=col_idx)
+            cell.alignment = wrapped_alignment
+    
+    # Add borders to all cells
+    for row in range(1, worksheet.max_row + 1):
+        for col in range(1, worksheet.max_column + 1):
+            worksheet.cell(row=row, column=col).border = border
+    
+    # Adjust column widths
+    for col_idx, col_name in enumerate(hierarchical_df.columns, 1):
+        column_width = 15  # Default width
+        
+        if col_name == 'Abstract':
+            column_width = 50
+        elif col_name == 'ArticleTitle':
+            column_width = 40
+        elif col_name == 'JournalTitle':
+            column_width = 30
+        elif col_name == 'Affiliation':
+            column_width = 40
+        elif col_name == 'PublicationDate':
+            column_width = 15
+        elif col_name == 'PMID':
+            column_width = 12
+        elif col_name == 'Author':
+            column_width = 25
+        
+        worksheet.column_dimensions[get_column_letter(col_idx)].width = column_width
+    
+    # Freeze the top row
+    worksheet.freeze_panes = "A2"
+    
+    # Save and return
+    writer.close()
+    output.seek(0)
+    return output.getvalue()
+
+def to_excel(df):
+    """Convert dataframe to Excel file in memory"""
     try:
+        if df.empty:
+            # Return an empty Excel file with just headers if df is empty
+            output = BytesIO()
+            pd.DataFrame(columns=['No Data Available']).to_excel(output, index=False)
+            return output.getvalue()
+        
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')
@@ -934,10 +1340,9 @@ def to_excel(df):
                 column_width = max(df[col].astype(str).map(len).max(), len(col))
                 worksheet.set_column(i, i, column_width + 2)  # Add padding
         
-        processed_data = output.getvalue()
-        return processed_data
+        return output.getvalue()
     except Exception as e:
-        st.error(f"Error creating Excel file: {str(e)}")
+        logger.error(f"Error creating Excel file: {str(e)}")
         # Create a simple Excel file without formatting as fallback
         output = BytesIO()
         df.to_excel(output, index=False)
@@ -960,8 +1365,16 @@ if 'excel_before' not in st.session_state:
     st.session_state.excel_before = None
 if 'excel_after' not in st.session_state:
     st.session_state.excel_after = None
+if 'hierarchical_excel_before' not in st.session_state:
+    st.session_state.hierarchical_excel_before = None
+if 'hierarchical_excel_after' not in st.session_state:
+    st.session_state.hierarchical_excel_after = None
 if 'search_submitted' not in st.session_state:
     st.session_state.search_submitted = False
+if 'moved_to_before' not in st.session_state:
+    st.session_state.moved_to_before = 0
+if 'moved_to_after' not in st.session_state:
+    st.session_state.moved_to_after = 0
 
 # Sidebar configuration
 st.sidebar.markdown("### Search Configuration")
@@ -974,6 +1387,7 @@ with st.sidebar.form("search_form"):
     fda_approval_date = st.date_input("FDA Approval Date", value=datetime.date(2022, 1, 7))
     include_company = st.checkbox("Include company in search query", value=False)
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
+    use_improved_search = st.checkbox("Use improved search strategy", value=True, help="Include both drug name and compound in both before/after queries")
     
     submitted = st.form_submit_button("Search PubMed")
     
@@ -996,12 +1410,21 @@ if submitted or st.session_state.search_submitted:
         after_start_date_str = after_start_date.strftime("%Y/%m/%d")
         after_end_date_str = after_end_date.strftime("%Y/%m/%d")
         
-        # Build queries
-        query_before = (f'"{composition}"[All Fields] AND "{disease}"[All Fields] '
-                       f'AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])')
-        
-        query_after = (f'("{drug_name}"[All Fields] OR "{composition}"[All Fields]) '
-                      f'AND "{disease}"[All Fields] ')
+        # Build queries using improved strategy if selected
+        if use_improved_search:
+            # Use both drug name and composition in both queries for better coverage
+            query_before = (f'("{composition}"[All Fields] OR "{drug_name}"[All Fields]) AND "{disease}"[All Fields] '
+                         f'AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])')
+            
+            query_after = (f'("{drug_name}"[All Fields] OR "{composition}"[All Fields]) '
+                         f'AND "{disease}"[All Fields] ')
+        else:
+            # Original simpler query strategy
+            query_before = (f'"{composition}"[All Fields] AND "{disease}"[All Fields] '
+                         f'AND ("{before_start_date_str}"[pdat] : "{before_end_date_str}"[pdat])')
+            
+            query_after = (f'("{drug_name}"[All Fields] OR "{composition}"[All Fields]) '
+                         f'AND "{disease}"[All Fields] ')
         
         # Add company to query if requested
         if include_company:
@@ -1014,7 +1437,7 @@ if submitted or st.session_state.search_submitted:
         st.code(f"After Approval: {query_after}")
         
         # Only fetch if we need to (if data not already in session state)
-        if st.session_state.df_before is None:
+        if st.session_state.df_before is None or submitted:
             # Fetch articles
             st.write("Fetching articles for Before Approval period...")
             progress_bar_before = st.progress(0)
@@ -1033,12 +1456,23 @@ if submitted or st.session_state.search_submitted:
                 progress_callback=lambda progress: progress_bar_after.progress(progress)
             )
             
+            # Verify dates and recategorize records for better precision
+            verified_before, verified_after, moved_to_before, moved_to_after = verify_dates_and_recategorize(
+                records_before, records_after, fda_date
+            )
+            
+            st.session_state.moved_to_before = moved_to_before
+            st.session_state.moved_to_after = moved_to_after
+            
             # Convert to dataframes
-            df_before_raw = pd.DataFrame(records_before)
-            df_after_raw = pd.DataFrame(records_after)
+            df_before_raw = pd.DataFrame(verified_before)
+            df_after_raw = pd.DataFrame(verified_after)
             
             # Process and verify data
             st.subheader("Processing and Validating Data")
+            
+            if moved_to_before > 0 or moved_to_after > 0:
+                st.info(f"Date verification: {moved_to_after} articles moved to 'after approval' and {moved_to_before} articles moved to 'before approval' based on precise publication dates.")
             
             if len(df_before_raw) > 0:
                 st.write(f"Processing {len(df_before_raw)} articles from Before Approval period...")
@@ -1046,11 +1480,13 @@ if submitted or st.session_state.search_submitted:
                 st.session_state.df_before = df_before
                 st.session_state.stats_before = stats_before
                 st.session_state.excel_before = to_excel(df_before)
+                st.session_state.hierarchical_excel_before = create_hierarchical_excel(df_before)
             else:
-                st.warning("No articles found for Before Approval period.")
+                st.info("No articles found for Before Approval period.")
                 st.session_state.df_before = pd.DataFrame()
                 st.session_state.stats_before = {"original_rows": 0}
                 st.session_state.excel_before = to_excel(pd.DataFrame())
+                st.session_state.hierarchical_excel_before = create_hierarchical_excel(pd.DataFrame())
             
             if len(df_after_raw) > 0:
                 st.write(f"Processing {len(df_after_raw)} articles from After Approval period...")
@@ -1058,11 +1494,13 @@ if submitted or st.session_state.search_submitted:
                 st.session_state.df_after = df_after
                 st.session_state.stats_after = stats_after
                 st.session_state.excel_after = to_excel(df_after)
+                st.session_state.hierarchical_excel_after = create_hierarchical_excel(df_after)
             else:
-                st.warning("No articles found for After Approval period.")
+                st.info("No articles found for After Approval period.")
                 st.session_state.df_after = pd.DataFrame()
                 st.session_state.stats_after = {"original_rows": 0}
                 st.session_state.excel_after = to_excel(pd.DataFrame())
+                st.session_state.hierarchical_excel_after = create_hierarchical_excel(pd.DataFrame())
             
             # Generate insights
             st.session_state.insights = extract_statistical_insights(
@@ -1079,7 +1517,8 @@ if submitted or st.session_state.search_submitted:
                 "📈 Time Trends", 
                 "🔎 Content Analysis", 
                 "👥 Author Analysis",
-                "💾 Download Data"
+                "💾 Download Data",
+                "ℹ️ About"
             ])
             
             # Tab 1: Data Overview
@@ -1171,6 +1610,11 @@ if submitted or st.session_state.search_submitted:
                             st.plotly_chart(chart, use_container_width=True)
                         else:
                             st.info("Insufficient year data for trend visualization.")
+                        
+                        # Add monthly trend chart if data is available
+                        monthly_chart = create_monthly_trend_chart(st.session_state.df_before)
+                        if monthly_chart:
+                            st.plotly_chart(monthly_chart, use_container_width=True)
                     else:
                         st.info("No data available for trend visualization.")
                 
@@ -1182,6 +1626,11 @@ if submitted or st.session_state.search_submitted:
                             st.plotly_chart(chart, use_container_width=True)
                         else:
                             st.info("Insufficient year data for trend visualization.")
+                        
+                        # Add monthly trend chart if data is available
+                        monthly_chart = create_monthly_trend_chart(st.session_state.df_after)
+                        if monthly_chart:
+                            st.plotly_chart(monthly_chart, use_container_width=True)
                     else:
                         st.info("No data available for trend visualization.")
                 
@@ -1217,42 +1666,29 @@ if submitted or st.session_state.search_submitted:
                 
                 # Word clouds
                 st.markdown("<h3 class='section-header'>Abstract Word Clouds</h3>", unsafe_allow_html=True)
-                
-                # Display note about NLTK if not available
-                if not NLTK_AVAILABLE:
-                    st.warning("NLTK is not available or couldn't be properly loaded. Word clouds and some text analysis features are disabled.")
-                
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     st.write("Before Approval:")
-                    if not st.session_state.df_before.empty and NLTK_AVAILABLE:
-                        try:
-                            fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
-                            if fig:
-                                st.pyplot(fig)
-                            else:
-                                st.info("Insufficient abstract data for word cloud.")
-                        except Exception as e:
-                            st.error(f"Error generating word cloud: {str(e)}")
-                            st.info("Could not generate word cloud due to an error.")
+                    if not st.session_state.df_before.empty:
+                        fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
+                        if fig:
+                            st.pyplot(fig)
+                        else:
+                            st.info("Insufficient abstract data for word cloud.")
                     else:
-                        st.info("No data available for word cloud or NLTK not available.")
+                        st.info("No data available for word cloud.")
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty and NLTK_AVAILABLE:
-                        try:
-                            fig = generate_wordcloud(st.session_state.df_after, column='Abstract')
-                            if fig:
-                                st.pyplot(fig)
-                            else:
-                                st.info("Insufficient abstract data for word cloud.")
-                        except Exception as e:
-                            st.error(f"Error generating word cloud: {str(e)}")
-                            st.info("Could not generate word cloud due to an error.")
+                    if not st.session_state.df_after.empty:
+                        fig = generate_wordcloud(st.session_state.df_after, column='Abstract')
+                        if fig:
+                            st.pyplot(fig)
+                        else:
+                            st.info("Insufficient abstract data for word cloud.")
                     else:
-                        st.info("No data available for word cloud or NLTK not available.")
+                        st.info("No data available for word cloud.")
                 
                 # Bigram analysis
                 st.markdown("<h3 class='section-header'>Bigram Analysis</h3>", unsafe_allow_html=True)
@@ -1261,30 +1697,22 @@ if submitted or st.session_state.search_submitted:
                 with col1:
                     st.write("Before Approval:")
                     if not st.session_state.df_before.empty:
-                        try:
-                            chart = generate_bigram_analysis(st.session_state.df_before, column='Abstract')
-                            if chart:
-                                st.plotly_chart(chart, use_container_width=True)
-                            else:
-                                st.info("Insufficient abstract data for bigram analysis.")
-                        except Exception as e:
-                            st.error(f"Error in bigram analysis: {str(e)}")
-                            st.info("Could not generate bigram analysis due to an error.")
+                        chart = generate_bigram_analysis(st.session_state.df_before, column='Abstract')
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient abstract data for bigram analysis.")
                     else:
                         st.info("No data available for bigram analysis.")
                 
                 with col2:
                     st.write("After Approval:")
                     if not st.session_state.df_after.empty:
-                        try:
-                            chart = generate_bigram_analysis(st.session_state.df_after, column='Abstract')
-                            if chart:
-                                st.plotly_chart(chart, use_container_width=True)
-                            else:
-                                st.info("Insufficient abstract data for bigram analysis.")
-                        except Exception as e:
-                            st.error(f"Error in bigram analysis: {str(e)}")
-                            st.info("Could not generate bigram analysis due to an error.")
+                        chart = generate_bigram_analysis(st.session_state.df_after, column='Abstract')
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Insufficient abstract data for bigram analysis.")
                     else:
                         st.info("No data available for bigram analysis.")
                 
@@ -1292,15 +1720,11 @@ if submitted or st.session_state.search_submitted:
                 st.markdown("<h3 class='section-header'>Topic Comparison</h3>", unsafe_allow_html=True)
                 
                 if not st.session_state.df_before.empty and not st.session_state.df_after.empty:
-                    try:
-                        chart = compare_abstract_topics(st.session_state.df_before, st.session_state.df_after)
-                        if chart:
-                            st.plotly_chart(chart, use_container_width=True)
-                        else:
-                            st.info("Insufficient data for topic comparison.")
-                    except Exception as e:
-                        st.error(f"Error in topic comparison: {str(e)}")
-                        st.info("Could not generate topic comparison due to an error.")
+                    chart = compare_abstract_topics(st.session_state.df_before, st.session_state.df_after)
+                    if chart:
+                        st.plotly_chart(chart, use_container_width=True)
+                    else:
+                        st.info("Insufficient data for topic comparison.")
                 else:
                     st.info("Data from both before and after approval periods is required for topic comparison.")
             
@@ -1355,14 +1779,23 @@ if submitted or st.session_state.search_submitted:
                         if st.session_state.df_before.empty:
                             st.info("No data available for download.")
                         else:
-                            download_before = st.download_button(
-                                label="Download Excel for Before Approval Articles",
-                                data=st.session_state.excel_before,
-                                file_name=f"{drug_name}_BeforeApproval.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                help="Download the processed data for Before Approval period",
-                                key="download_before_button"
-                            )
+                            col1a, col1b = st.columns(2)
+                            with col1a:
+                                download_before = st.download_button(
+                                    label="Download Standard Excel",
+                                    data=st.session_state.excel_before,
+                                    file_name=f"{drug_name}_BeforeApproval.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    help="Download the processed data in standard Excel format"
+                                )
+                            with col1b:
+                                download_hierarchical = st.download_button(
+                                    label="Download Hierarchical Excel",
+                                    data=st.session_state.hierarchical_excel_before,
+                                    file_name=f"{drug_name}_BeforeApproval_Hierarchical.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    help="Download in hierarchical format with authors as sub-rows"
+                                )
                             st.write(f"Contains {len(st.session_state.df_before)} articles")
                     else:
                         st.info("Data not yet processed. Run a search first.")
@@ -1373,17 +1806,78 @@ if submitted or st.session_state.search_submitted:
                         if st.session_state.df_after.empty:
                             st.info("No data available for download.")
                         else:
-                            download_after = st.download_button(
-                                label="Download Excel for After Approval Articles",
-                                data=st.session_state.excel_after,
-                                file_name=f"{drug_name}_AfterApproval.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                help="Download the processed data for After Approval period",
-                                key="download_after_button"
-                            )
+                            col2a, col2b = st.columns(2)
+                            with col2a:
+                                download_after = st.download_button(
+                                    label="Download Standard Excel",
+                                    data=st.session_state.excel_after,
+                                    file_name=f"{drug_name}_AfterApproval.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    help="Download the processed data in standard Excel format",
+                                    key="download_after_button"
+                                )
+                            with col2b:
+                                download_hierarchical = st.download_button(
+                                    label="Download Hierarchical Excel",
+                                    data=st.session_state.hierarchical_excel_after,
+                                    file_name=f"{drug_name}_AfterApproval_Hierarchical.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    help="Download in hierarchical format with authors as sub-rows",
+                                    key="download_hierarchical_after_button"
+                                )
                             st.write(f"Contains {len(st.session_state.df_after)} articles")
                     else:
                         st.info("Data not yet processed. Run a search first.")
+            
+            # Tab 6: About
+            with tabs[5]:
+                st.markdown("<h2 class='subheader'>About the PubMed Research Analyzer</h2>", unsafe_allow_html=True)
+                
+                st.markdown("""
+                ### Overview
+                
+                The PubMed Research Analyzer is a tool designed to help researchers analyze publication trends before and after FDA approval of pharmaceutical products. It provides insights into how research patterns, journal distributions, author collaborations, and content focus change following regulatory approval.
+                
+                ### Key Features
+                
+                - **Precision Date Handling**: Uses month-level precision to accurately categorize publications
+                - **Smart Search Strategy**: Includes both brand name and compound name for comprehensive results
+                - **Hierarchical Excel Export**: Creates beautifully formatted Excel files with authors as sub-rows
+                - **Date Verification**: Double-checks publication dates to ensure correct categorization
+                - **Visual Analysis**: Generates visualizations of publication trends, journal distributions, and content analysis
+                - **Author Network Mapping**: Creates collaboration networks showing key researchers in the field
+                
+                ### How to Use
+                
+                1. Enter the drug information in the sidebar
+                2. Set the FDA approval date
+                3. Click "Search PubMed" to retrieve articles
+                4. Explore the analysis in the different tabs
+                5. Download data in standard or hierarchical Excel format
+                
+                ### About Hierarchical Excel Format
+                
+                The hierarchical Excel format organizes data with:
+                - Main rows containing article information
+                - Sub-rows listing each author and their affiliation
+                - Merged cells for article details
+                - Alternating row colors for better readability
+                - Appropriate column widths and text wrapping
+                
+                This format makes it easier to explore author contributions while maintaining the article context.
+                """)
+                
+                st.markdown("### Data Processing")
+                st.image("https://www.ncbi.nlm.nih.gov/core/assets/cbe/images/logo-pubmed.svg", width=200)
+                st.markdown("""
+                All publication data is retrieved from PubMed using the E-utilities API. The application processes XML responses to extract:
+                
+                - Publication metadata (title, journal, dates)
+                - Author information
+                - Abstract content
+                
+                The data is then processed for analysis, including date normalization, author extraction, and statistical calculations.
+                """)
 
 # Footer
 st.markdown("""
