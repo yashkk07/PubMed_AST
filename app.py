@@ -32,7 +32,7 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger('pubmed_app')
 
 # Suppress warnings in streamlit
-st.set_option('deprecation.showPyplotGlobalUse', False)
+# st.set_option('deprecation.showPyplotGlobalUse', False)
 
 # Download necessary NLTK data silently without user-visible warnings
 try:
@@ -858,11 +858,11 @@ def generate_wordcloud(df, column='Abstract'):
             colormap='Blues'
         ).generate(' '.join(filtered_words))
         
-        # Convert to figure
-        fig, ax = plt.subplots(figsize=(10, 5))
+        # Create a new figure with explicit figure object
+        fig = plt.figure(figsize=(10, 5))
         plt.style.use('dark_background')
-        ax.imshow(wordcloud, interpolation='bilinear')
-        ax.axis('off')
+        plt.imshow(wordcloud, interpolation='bilinear')
+        plt.axis('off')
         plt.tight_layout()
         
         return fig
@@ -1668,11 +1668,13 @@ if submitted or st.session_state.search_submitted:
                 st.markdown("<h3 class='section-header'>Abstract Word Clouds</h3>", unsafe_allow_html=True)
                 col1, col2 = st.columns(2)
                 
+                # In the Content Analysis tab where wordcloud figures are displayed:
                 with col1:
                     st.write("Before Approval:")
                     if not st.session_state.df_before.empty:
                         fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
                         if fig:
+                            # Use st.pyplot() with explicit figure
                             st.pyplot(fig)
                         else:
                             st.info("Insufficient abstract data for word cloud.")
