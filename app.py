@@ -735,31 +735,34 @@ def verify_dates_and_recategorize(records_before, records_after, fda_date):
     return verified_before, verified_after, moved_to_before, moved_to_after
 
 def deduplicate_records(records_before, records_after):
-    """
-    Remove any duplicate records based on PMID that appear in both before and after datasets.
-    Records in the "before" dataset take precedence over those in the "after" dataset.
+    # First deduplicate within each dataset
+    before_pmids = {}
+    after_pmids = {}
     
-    Returns deduplicated before/after record lists.
-    """
-    pmid_seen = set()
-    unique_before = []
-    unique_after = []
-    
-    # Process before records first (prioritizing before approval)
+    # Deduplicate within before dataset
     for record in records_before:
         pmid = record.get("PMID", "")
-        if pmid and pmid not in pmid_seen:
-            pmid_seen.add(pmid)
-            unique_before.append(record)
+        if pmid and pmid not in before_pmids:
+            before_pmids[pmid] = record
     
-    # Then process after records
+    # Deduplicate within after dataset
     for record in records_after:
         pmid = record.get("PMID", "")
-        if pmid and pmid not in pmid_seen:
-            pmid_seen.add(pmid)
-            unique_after.append(record)
+        if pmid and pmid not in after_pmids:
+            after_pmids[pmid] = record
     
-    return unique_before, unique_after
+    # Convert to lists
+    unique_before = list(before_pmids.values())
+    unique_after = list(after_pmids.values())
+    
+    # Now deduplicate between datasets
+    # Before records take precedence
+    pmid_seen = set(before_pmids.keys())
+    
+    # Filter after dataset to remove any PMIDs already in before dataset
+    final_after = [record for record in unique_after if record.get("PMID", "") not in pmid_seen]
+    
+    return unique_before, final_after
 
 # ------------------ Data Analysis Functions ------------------
 
