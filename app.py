@@ -386,11 +386,15 @@ def fetch_pubmed_articles(query, batch_size=BATCH_NUM, limit=None, progress_call
         time.sleep(0.34)  # Respect rate limits
     return records
 # ------------------ Data Verification Functions ------------------
-
 def check_date_range(df, dataset_type, start_date, end_date):
     """
     Check if dates are within the expected range using full publication date.
-    For records with missing or invalid dates, we'll keep them.
+    Handles different precision levels with appropriate rounding.
+    
+    For imprecise dates:
+    - Year only: For "before" category, use Dec 31; for "after", use Jan 1
+    - Year-month: For "before" category, use last day of month; for "after", use first day
+    
     Returns the count of invalid dates found.
     """
     invalid_count = 0
@@ -413,13 +417,88 @@ def check_date_range(df, dataset_type, start_date, end_date):
     }
     
     for idx, row in df.iterrows():
-        # Skip if no publication date info
-        if pd.isna(row.get('PublicationDate', None)) or row.get('PublicationDate', '') == '':
-            continue
+        # First try to use the PublicationDate field if available
+        if not pd.isna(row.get('PublicationDate', None)) and row.get('PublicationDate', '') != '':
+            try:
+                # Try to parse the date
+                pub_date = datetime.datetime.strptime(row['PublicationDate'], "%Y-%m-%d")
+                
+                # Check if date is outside the expected range
+                if dataset_type == "before" and (pub_date < start_date or pub_date > end_date):
+                    rows_to_drop.append(idx)
+                    invalid_count += 1
+                elif dataset_type == "after" and (pub_date < start_date):
+                    rows_to_drop.append(idx)
+                    invalid_count += 1
+                continue  # Skip to next record if we've processed this one
+            except (ValueError, TypeError):
+                # If parsing fails, continue to component-based processing
+                pass
+        
+        # If PublicationDate doesn't exist or couldn't be parsed, try component-based approach
+        pub_year = row.get("PublicationYear", "")
+        pub_month = row.get("PublicationMonth", "")
+        pub_day = row.get("PublicationDay", "")
+        
+        if pub_year and str(pub_year).isdigit():
+            year = int(pub_year)
             
-        try:
-            # Try to parse the date
-            pub_date = datetime.datetime.strptime(row['PublicationDate'], "%Y-%m-%d")
+            # Different handling based on available precision
+            if pub_month and str(pub_month).isdigit():
+                month = int(pub_month)
+                
+                if pub_day and str(pub_day).isdigit():
+                    # Full date precision
+                    day = int(pub_day)
+                    try:
+                        pub_date = datetime.datetime(year, month, day)
+                    except ValueError:
+                        # Invalid date (e.g., Feb 30) - use month-level precision
+                        if dataset_type == "before":
+                            # Get the last day of the month
+                            if month == 12:
+                                last_day = 31
+                            else:
+                                try:
+                                    next_month = datetime.datetime(year, month+1, 1)
+                                    last_day = (next_month - datetime.timedelta(days=1)).day
+                                except ValueError:
+                                    last_day = 28  # Default to a safe value
+                            
+                            pub_date = datetime.datetime(year, month, last_day)
+                        else:  # "after"
+                            pub_date = datetime.datetime(year, month, 1)
+                else:
+                    # Year-month precision - use last day or first day
+                    if dataset_type == "before":
+                        # Get the last day of the month
+                        if month == 12:
+                            last_day = 31
+                        else:
+                            try:
+                                next_month = datetime.datetime(year, month+1, 1)
+                                last_day = (next_month - datetime.timedelta(days=1)).day
+                            except ValueError:
+                                # Invalid month, default to day 1
+                                last_day = 1
+                        
+                        try:
+                            pub_date = datetime.datetime(year, month, last_day)
+                        except ValueError:
+                            # If invalid date, default to Jan 1
+                            pub_date = datetime.datetime(year, 1, 1)
+                    else:  # "after"
+                        try:
+                            pub_date = datetime.datetime(year, month, 1)
+                        except ValueError:
+                            # Invalid month, default to Jan 1
+                            pub_date = datetime.datetime(year, 1, 1)
+            else:
+                # Year-only precision - use Dec 31 or Jan 1
+                if dataset_type == "before":
+                    pub_date = datetime.datetime(year, 12, 31)
+                else:  # "after"
+                    pub_date = datetime.datetime(year, 1, 1)
             
             # Check if date is outside the expected range
             if dataset_type == "before" and (pub_date < start_date or pub_date > end_date):
@@ -428,15 +507,13 @@ def check_date_range(df, dataset_type, start_date, end_date):
             elif dataset_type == "after" and (pub_date < start_date):
                 rows_to_drop.append(idx)
                 invalid_count += 1
-        except (ValueError, TypeError):
-            # If year can't be converted to integer, keep the row
-            continue
     
     # Drop rows with invalid dates
     if rows_to_drop:
         df.drop(rows_to_drop, inplace=True)
     
     return invalid_count
+
 
 def find_max_author_column(df):
     """Find the maximum author column that has non-empty values"""
@@ -519,7 +596,13 @@ def process_dataset(df, dataset_type, start_date, end_date):
 
 def verify_dates_and_recategorize(records_before, records_after, fda_date):
     """
-    Double-check dates and move articles to the correct category.
+    Double-check dates and move articles to the correct category, with improved handling 
+    for different date precision levels.
+    
+    For imprecise dates:
+    - Year only: For "before" category, use Dec 31 of the year; for "after", use Jan 1
+    - Year-month: For "before" category, use last day of month; for "after", use first day
+    
     Returns verified before/after records lists and counts of moved articles.
     """
     verified_before = []
@@ -529,33 +612,154 @@ def verify_dates_and_recategorize(records_before, records_after, fda_date):
     
     # Process "before" records
     for record in records_before:
-        try:
-            if record["PublicationDate"]:
+        # First try to use the PublicationDate field if available
+        if record.get("PublicationDate", ""):
+            try:
                 pub_date = datetime.datetime.strptime(record["PublicationDate"], "%Y-%m-%d")
                 if pub_date > fda_date:
                     verified_after.append(record)
                     moved_to_after += 1
                 else:
                     verified_before.append(record)
-        except (ValueError, TypeError):
-            # If we can't parse the date, keep it in the original category
+                continue  # Skip to next record
+            except (ValueError, TypeError):
+                # If parsing fails, continue to component-based processing
+                pass
+        
+        # Component-based approach for imprecise dates
+        pub_year = record.get("PublicationYear", "")
+        pub_month = record.get("PublicationMonth", "")
+        pub_day = record.get("PublicationDay", "")
+        
+        if pub_year and str(pub_year).isdigit():
+            year = int(pub_year)
+            
+            # Different handling based on available precision
+            if pub_month and str(pub_month).isdigit():
+                month = int(pub_month)
+                
+                if pub_day and str(pub_day).isdigit():
+                    # Full date precision
+                    day = int(pub_day)
+                    try:
+                        pub_date = datetime.datetime(year, month, day)
+                    except ValueError:
+                        # For "before" records with invalid dates, use conservative approach
+                        # Treat as Dec 31 of the year (maximizing chance it belongs in "before")
+                        pub_date = datetime.datetime(year, 12, 31)
+                else:
+                    # Year-month precision - for "before" records, use last day of month
+                    try:
+                        if month == 12:
+                            last_day = 31
+                        else:
+                            next_month = datetime.datetime(year, month+1, 1)
+                            last_day = (next_month - datetime.timedelta(days=1)).day
+                        
+                        pub_date = datetime.datetime(year, month, last_day)
+                    except ValueError:
+                        # Invalid month, default to Dec 31
+                        pub_date = datetime.datetime(year, 12, 31)
+            else:
+                # Year-only precision - for "before" records, use Dec 31
+                pub_date = datetime.datetime(year, 12, 31)
+            
+            # Check against FDA date
+            if pub_date > fda_date:
+                verified_after.append(record)
+                moved_to_after += 1
+            else:
+                verified_before.append(record)
+        else:
+            # If no parseable year, keep in original category
             verified_before.append(record)
     
     # Process "after" records
     for record in records_after:
-        try:
-            if record["PublicationDate"]:
+        # First try to use the PublicationDate field if available
+        if record.get("PublicationDate", ""):
+            try:
                 pub_date = datetime.datetime.strptime(record["PublicationDate"], "%Y-%m-%d")
                 if pub_date <= fda_date:
                     verified_before.append(record)
                     moved_to_before += 1
                 else:
                     verified_after.append(record)
-        except (ValueError, TypeError):
-            # If we can't parse the date, keep it in the original category
+                continue  # Skip to next record
+            except (ValueError, TypeError):
+                # If parsing fails, continue to component-based processing
+                pass
+        
+        # Component-based approach for imprecise dates
+        pub_year = record.get("PublicationYear", "")
+        pub_month = record.get("PublicationMonth", "")
+        pub_day = record.get("PublicationDay", "")
+        
+        if pub_year and str(pub_year).isdigit():
+            year = int(pub_year)
+            
+            # Different handling based on available precision
+            if pub_month and str(pub_month).isdigit():
+                month = int(pub_month)
+                
+                if pub_day and str(pub_day).isdigit():
+                    # Full date precision
+                    day = int(pub_day)
+                    try:
+                        pub_date = datetime.datetime(year, month, day)
+                    except ValueError:
+                        # For "after" records with invalid dates, use conservative approach
+                        # Treat as Jan 1 of the year (maximizing chance it belongs in "after")
+                        pub_date = datetime.datetime(year, 1, 1)
+                else:
+                    # Year-month precision - for "after" records, use first day of month
+                    try:
+                        pub_date = datetime.datetime(year, month, 1)
+                    except ValueError:
+                        # Invalid month, default to Jan 1
+                        pub_date = datetime.datetime(year, 1, 1)
+            else:
+                # Year-only precision - for "after" records, use Jan 1
+                pub_date = datetime.datetime(year, 1, 1)
+            
+            # Check against FDA date
+            if pub_date <= fda_date:
+                verified_before.append(record)
+                moved_to_before += 1
+            else:
+                verified_after.append(record)
+        else:
+            # If no parseable year, keep in original category
             verified_after.append(record)
     
     return verified_before, verified_after, moved_to_before, moved_to_after
+
+def deduplicate_records(records_before, records_after):
+    """
+    Remove any duplicate records based on PMID that appear in both before and after datasets.
+    Records in the "before" dataset take precedence over those in the "after" dataset.
+    
+    Returns deduplicated before/after record lists.
+    """
+    pmid_seen = set()
+    unique_before = []
+    unique_after = []
+    
+    # Process before records first (prioritizing before approval)
+    for record in records_before:
+        pmid = record.get("PMID", "")
+        if pmid and pmid not in pmid_seen:
+            pmid_seen.add(pmid)
+            unique_before.append(record)
+    
+    # Then process after records
+    for record in records_after:
+        pmid = record.get("PMID", "")
+        if pmid and pmid not in pmid_seen:
+            pmid_seen.add(pmid)
+            unique_after.append(record)
+    
+    return unique_before, unique_after
 
 # ------------------ Data Analysis Functions ------------------
 
@@ -1375,7 +1579,12 @@ if 'moved_to_before' not in st.session_state:
     st.session_state.moved_to_before = 0
 if 'moved_to_after' not in st.session_state:
     st.session_state.moved_to_after = 0
-
+# Add to the session state initialization section
+if 'deduped_before' not in st.session_state:
+    st.session_state.deduped_before = 0
+if 'deduped_after' not in st.session_state:
+    st.session_state.deduped_after = 0
+    
 # Sidebar configuration
 st.sidebar.markdown("### Search Configuration")
 
@@ -1460,20 +1669,35 @@ if submitted or st.session_state.search_submitted:
             verified_before, verified_after, moved_to_before, moved_to_after = verify_dates_and_recategorize(
                 records_before, records_after, fda_date
             )
-            
+
+            # Deduplicate records to ensure no overlap
+            final_before, final_after = deduplicate_records(verified_before, verified_after)
+
+            # Calculate how many were deduped
+            before_deduped = len(verified_before) - len(final_before)
+            after_deduped = len(verified_after) - len(final_after)
+
+
+            final_before, final_after = deduplicate_records(verified_before, verified_after)
+
             st.session_state.moved_to_before = moved_to_before
             st.session_state.moved_to_after = moved_to_after
-            
+            st.session_state.deduped_before = before_deduped
+            st.session_state.deduped_after = after_deduped
+
             # Convert to dataframes
-            df_before_raw = pd.DataFrame(verified_before)
-            df_after_raw = pd.DataFrame(verified_after)
+            df_before_raw = pd.DataFrame(final_before)  # Use final_before instead of verified_before
+            df_after_raw = pd.DataFrame(final_after)    # Use final_after instead of verified_after
             
             # Process and verify data
             st.subheader("Processing and Validating Data")
             
             if moved_to_before > 0 or moved_to_after > 0:
                 st.info(f"Date verification: {moved_to_after} articles moved to 'after approval' and {moved_to_before} articles moved to 'before approval' based on precise publication dates.")
-            
+
+            if before_deduped > 0 or after_deduped > 0:
+                st.info(f"Deduplication: Removed {before_deduped} duplicate articles from 'before approval' and {after_deduped} duplicate articles from 'after approval' datasets.")
+                        
             if len(df_before_raw) > 0:
                 st.write(f"Processing {len(df_before_raw)} articles from Before Approval period...")
                 df_before, stats_before = process_dataset(df_before_raw, "before", before_start_date, before_end_date)
