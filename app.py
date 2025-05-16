@@ -1649,7 +1649,13 @@ with st.sidebar.form("search_form"):
     composition = st.text_input("Composition/Compound", value="daridorexant")
     disease = st.text_input("Target Disease", value="Insomnia")
     company = st.text_input("Company", value="Idorsia Pharmaceuticals US Inc")
-    fda_approval_date = st.date_input("FDA Approval Date", value=datetime.date(2022, 1, 7))
+    # Set a wide date range to allow for historical FDA approvals (1950-2030)
+    fda_approval_date = st.date_input(
+        "FDA Approval Date", 
+        value=datetime.date(2022, 1, 7),
+        min_value=datetime.date(1950, 1, 1),
+        max_value=datetime.date(2030, 12, 31)
+    )
     
     # Add flexibility for date ranges
     st.write("##### Date Range Configuration")
