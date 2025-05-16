@@ -1677,12 +1677,52 @@ with st.sidebar.form("search_form"):
 # Process when form is submitted
 if submitted or st.session_state.search_submitted:
     with st.spinner("Fetching articles from PubMed..."):
-        # Convert dates with flexible range
+        # Convert dates with flexible range - with safer date arithmetic
         fda_date = datetime.datetime.combine(fda_approval_date, datetime.datetime.min.time())
-        before_start_date = fda_date.replace(year=fda_date.year - before_years)
+        
+        # Helper function to safely subtract years from a date
+        def subtract_years(dt, years):
+            try:
+                return dt.replace(year=dt.year - years)
+            except ValueError:
+                # Handle Feb 29 and similar edge cases by moving to the last day of the month
+                # For example, Feb 29, 2020 - 1 year becomes Feb 28, 2019
+                new_year = dt.year - years
+                new_month = dt.month
+                # Find the last day of the month in the new year
+                last_day = 28  # Default for February
+                if new_month in [1, 3, 5, 7, 8, 10, 12]:
+                    last_day = 31
+                elif new_month in [4, 6, 9, 11]:
+                    last_day = 30
+                elif new_month == 2 and (new_year % 4 == 0 and (new_year % 100 != 0 or new_year % 400 == 0)):
+                    last_day = 29  # Leap year
+                
+                return dt.replace(year=new_year, day=min(dt.day, last_day))
+        
+        # Helper function to safely add years to a date
+        def add_years(dt, years):
+            try:
+                return dt.replace(year=dt.year + years)
+            except ValueError:
+                # Handle Feb 29 and similar edge cases
+                new_year = dt.year + years
+                new_month = dt.month
+                # Find the last day of the month in the new year
+                last_day = 28  # Default for February
+                if new_month in [1, 3, 5, 7, 8, 10, 12]:
+                    last_day = 31
+                elif new_month in [4, 6, 9, 11]:
+                    last_day = 30
+                elif new_month == 2 and (new_year % 4 == 0 and (new_year % 100 != 0 or new_year % 400 == 0)):
+                    last_day = 29  # Leap year
+                
+                return dt.replace(year=new_year, day=min(dt.day, last_day))
+        
+        before_start_date = subtract_years(fda_date, before_years)
         before_end_date = fda_date
         after_start_date = fda_date
-        after_end_date = min(datetime.datetime.today(), fda_date.replace(year=fda_date.year + after_years))
+        after_end_date = min(datetime.datetime.today(), add_years(fda_date, after_years))
         
         # Format dates for PubMed query
         before_start_date_str = before_start_date.strftime("%Y/%m/%d")
