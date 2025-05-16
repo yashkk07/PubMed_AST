@@ -1387,7 +1387,7 @@ def create_hierarchical_excel(df):
     
     Returns the Excel file as bytes.
     """
-    if df.empty:
+    if is_dataframe_empty(df):
         # Return an empty Excel file with just headers if df is empty
         output = BytesIO()
         pd.DataFrame(columns=['No Data Available']).to_excel(output, index=False)
@@ -1574,7 +1574,7 @@ def create_hierarchical_excel(df):
 def to_excel(df):
     """Convert dataframe to Excel file in memory"""
     try:
-        if df.empty:
+        if is_dataframe_empty(df):
             # Return an empty Excel file with just headers if df is empty
             output = BytesIO()
             pd.DataFrame(columns=['No Data Available']).to_excel(output, index=False)
@@ -1641,6 +1641,14 @@ if 'deduped_before' not in st.session_state:
 if 'deduped_after' not in st.session_state:
     st.session_state.deduped_after = 0
     
+    # Helper function to safely check if DataFrame is empty
+def is_dataframe_empty(df):
+    if df is None:
+        return True
+    if not isinstance(df, pd.DataFrame):
+        return True
+    return df.empty
+
 # Sidebar configuration
 st.sidebar.markdown("### Search Configuration")
 
@@ -1872,7 +1880,7 @@ if submitted or st.session_state.search_submitted:
                             st.write(f"Columns trimmed: {stats.get('columns_removed', 0)}")
                         
                         # Preview the data
-                        if not st.session_state.df_before.empty:
+                        if st.session_state.df_before is not None and not is_dataframe_empty(st.session_state.df_before):
                             st.write("Data Preview:")
                             st.dataframe(st.session_state.df_before.head(5), use_container_width=True)
                 
@@ -1888,7 +1896,7 @@ if submitted or st.session_state.search_submitted:
                             st.write(f"Columns trimmed: {stats.get('columns_removed', 0)}")
                         
                         # Preview the data
-                        if not st.session_state.df_after.empty:
+                        if st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_after):
                             st.write("Data Preview:")
                             st.dataframe(st.session_state.df_after.head(5), use_container_width=True)
                 
@@ -1907,7 +1915,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col1:
                     st.write("Before Approval:")
-                    if not st.session_state.df_before.empty:
+                    if st.session_state.df_before is not None and not is_dataframe_empty(st.session_state.df_before):
                         chart = create_top_journals_chart(st.session_state.df_before)
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -1918,7 +1926,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty:
+                    if st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_after):
                         chart = create_top_journals_chart(st.session_state.df_after)
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -1936,7 +1944,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col1:
                     st.markdown("<h3 class='section-header'>Before Approval Trend</h3>", unsafe_allow_html=True)
-                    if not st.session_state.df_before.empty:
+                    if st.session_state.df_before is not None and not is_dataframe_empty(st.session_state.df_before):
                         chart = create_yearly_trend_chart(st.session_state.df_before)
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -1952,7 +1960,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col2:
                     st.markdown("<h3 class='section-header'>After Approval Trend</h3>", unsafe_allow_html=True)
-                    if not st.session_state.df_after.empty:
+                    if st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_after):
                         chart = create_yearly_trend_chart(st.session_state.df_after)
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -1972,7 +1980,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col1:
                     st.write("Before Approval:")
-                    if not st.session_state.df_before.empty:
+                    if st.session_state.df_before is not None and not is_dataframe_empty(st.session_state.df_before):
                         chart = journal_distribution_pie(st.session_state.df_before)
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -1983,7 +1991,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty:
+                    if st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_after):
                         chart = journal_distribution_pie(st.session_state.df_after)
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -2003,7 +2011,7 @@ if submitted or st.session_state.search_submitted:
                 # In the Content Analysis tab where wordcloud figures are displayed:
                 with col1:
                     st.write("Before Approval:")
-                    if not st.session_state.df_before.empty:
+                    if st.session_state.df_before is not None and not is_dataframe_empty(st.session_state.df_before):
                         fig = generate_wordcloud(st.session_state.df_before, column='Abstract')
                         if fig:
                             # Use st.pyplot() with explicit figure
@@ -2015,7 +2023,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty:
+                    if st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_after):
                         fig = generate_wordcloud(st.session_state.df_after, column='Abstract')
                         if fig:
                             st.pyplot(fig)
@@ -2030,7 +2038,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col1:
                     st.write("Before Approval:")
-                    if not st.session_state.df_before.empty:
+                    if st.session_state.df_before is not None and not is_dataframe_empty(st.session_state.df_before):
                         chart = generate_bigram_analysis(st.session_state.df_before, column='Abstract')
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -2041,7 +2049,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty:
+                    if st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_after):
                         chart = generate_bigram_analysis(st.session_state.df_after, column='Abstract')
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
@@ -2053,7 +2061,7 @@ if submitted or st.session_state.search_submitted:
                 # Topic comparison
                 st.markdown("<h3 class='section-header'>Topic Comparison</h3>", unsafe_allow_html=True)
                 
-                if not st.session_state.df_before.empty and not st.session_state.df_after.empty:
+                if st.session_state.df_before is not None and st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_before) and not is_dataframe_empty(st.session_state.df_after):
                     chart = compare_abstract_topics(st.session_state.df_before, st.session_state.df_after)
                     if chart:
                         st.plotly_chart(chart, use_container_width=True)
@@ -2072,7 +2080,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col1:
                     st.write("Before Approval:")
-                    if not st.session_state.df_before.empty:
+                    if st.session_state.df_before is not None and not is_dataframe_empty(st.session_state.df_before):
                         top_n = st.slider("Number of top authors (Before)", min_value=5, max_value=50, value=15, key="before_author_slider")
                         chart = create_author_collaboration_network(st.session_state.df_before, top_n=top_n)
                         if chart:
@@ -2084,7 +2092,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty:
+                    if st.session_state.df_after is not None and not is_dataframe_empty(st.session_state.df_after):
                         top_n = st.slider("Number of top authors (After)", min_value=5, max_value=50, value=15, key="after_author_slider")
                         chart = create_author_collaboration_network(st.session_state.df_after, top_n=top_n)
                         if chart:
@@ -2112,7 +2120,7 @@ if submitted or st.session_state.search_submitted:
                 with col1:
                     st.markdown("<h3 class='section-header'>Before Approval Data</h3>", unsafe_allow_html=True)
                     if st.session_state.excel_before is not None:
-                        if st.session_state.df_before.empty:
+                        if st.session_state.df_before is None or is_dataframe_empty(st.session_state.df_before):
                             st.info("No data available for download.")
                         else:
                             col1a, col1b = st.columns(2)
@@ -2139,7 +2147,7 @@ if submitted or st.session_state.search_submitted:
                 with col2:
                     st.markdown("<h3 class='section-header'>After Approval Data</h3>", unsafe_allow_html=True)
                     if st.session_state.excel_after is not None:
-                        if st.session_state.df_after.empty:
+                        if st.session_state.df_after is None or is_dataframe_empty(st.session_state.df_after):
                             st.info("No data available for download.")
                         else:
                             col2a, col2b = st.columns(2)
