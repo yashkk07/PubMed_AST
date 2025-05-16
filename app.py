@@ -1596,7 +1596,7 @@ with st.sidebar.form("search_form"):
     composition = st.text_input("Composition/Compound", value="daridorexant")
     disease = st.text_input("Target Disease", value="Insomnia")
     company = st.text_input("Company", value="Idorsia Pharmaceuticals US Inc")
-    fda_approval_date = st.date_input("FDA Approval Date", value=datetime.date(2022, 1, 7))
+    fda_approval_date = st.date_input("FDA Approval Date", value=datetime.date(2016, 1, 7))
     include_company = st.checkbox("Include company in search query", value=False)
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
     use_improved_search = st.checkbox("Use improved search strategy", value=False, help="Include both drug name and compound in both before/after queries")
