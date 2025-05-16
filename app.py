@@ -1596,7 +1596,12 @@ with st.sidebar.form("search_form"):
     composition = st.text_input("Composition/Compound", value="daridorexant")
     disease = st.text_input("Target Disease", value="Insomnia")
     company = st.text_input("Company", value="Idorsia Pharmaceuticals US Inc")
-    fda_approval_date = st.date_input("FDA Approval Date", value=datetime.date(2016, 1, 7))
+    fda_approval_date = st.date_input(
+        "FDA Approval Date",
+        value=datetime.date(2022, 1, 7),
+        min_value=datetime.date(1990, 1, 1),  # You can go earlier if needed
+        max_value=datetime.date.today()
+    )
     include_company = st.checkbox("Include company in search query", value=False)
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
     use_improved_search = st.checkbox("Use improved search strategy", value=False, help="Include both drug name and compound in both before/after queries")
@@ -1813,7 +1818,7 @@ if submitted or st.session_state.search_submitted:
                 
                 with col2:
                     st.write("After Approval:")
-                    if not st.session_state.df_after.empty:
+                    if st.session_state.df_after is not None and not st.session_state.df_after.empty:
                         chart = create_top_journals_chart(st.session_state.df_after)
                         if chart:
                             st.plotly_chart(chart, use_container_width=True)
