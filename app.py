@@ -225,12 +225,38 @@ def parse_month(month_str):
 def process_article(article):
     """
     Given an XML element for a PubMed article, extract basic information and author details
-    with full publication date precision.
+    with full publication date precision. Also extracts DOI and creates article link.
     """
     record = OrderedDict()
     record["PMID"] = getTextFromNode(article, "./MedlineCitation/PMID", "")
     record["JournalTitle"] = getTextFromNode(article, "./MedlineCitation/Article/Journal/Title", "")
     record["ArticleTitle"] = getTextFromNode(article, "./MedlineCitation/Article/ArticleTitle", "")
+    
+    # Extract DOI
+    doi = ""
+    # Try to get DOI from first ArticleId with DOI type
+    article_ids = article.findall(".//ArticleId")
+    for article_id in article_ids:
+        if article_id.get("IdType") == "doi" and article_id.text:
+            doi = article_id.text.strip()
+            break
+    
+    # If not found, try getting DOI from ELocation element
+    if not doi:
+        elocation_ids = article.findall(".//ELocationID")
+        for eloc in elocation_ids:
+            if eloc.get("EIdType") == "doi" and eloc.text:
+                doi = eloc.text.strip()
+                break
+    
+    record["DOI"] = doi
+    
+    # Create article link
+    pmid = record["PMID"]
+    if pmid:
+        record["ArticleLink"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+    else:
+        record["ArticleLink"] = ""
     
     # Extract full publication date information - first try ArticleDate
     pub_year = getTextFromNode(article, "./MedlineCitation/Article/ArticleDate/Year", "")
@@ -1296,7 +1322,7 @@ def extract_statistical_insights(df_before, df_after):
         author_cols_after = [col for col in df_after.columns if col.startswith('Author')]
         
         avg_authors_before = 0
-        avg_authors_after = 0
+        avg_authors_after = a = 0
         
         if author_cols_before:
             # Count non-empty author cells per row
@@ -1518,8 +1544,24 @@ def create_hierarchical_excel(df):
             column_width = 12
         elif col_name == 'Author':
             column_width = 25
+        elif col_name == 'DOI':
+            column_width = 30
+        elif col_name == 'ArticleLink':
+            column_width = 25
         
         worksheet.column_dimensions[get_column_letter(col_idx)].width = column_width
+    
+    # Make the ArticleLink column clickable
+    if 'ArticleLink' in hierarchical_df.columns:
+        article_link_idx = hierarchical_df.columns.get_loc('ArticleLink') + 1  # +1 because Excel is 1-indexed
+        for row_idx, row in enumerate(hierarchical_df.iterrows(), 2):  # Start from row 2
+            row_data = row[1]
+            link = row_data.get('ArticleLink', '')
+            if link:
+                cell = worksheet.cell(row=row_idx, column=article_link_idx)
+                cell.hyperlink = link
+                cell.value = "PubMed Link"
+                cell.font = Font(color="0000FF", underline="single")
     
     # Freeze the top row
     worksheet.freeze_panes = "A2"
@@ -1539,13 +1581,24 @@ def to_excel(df):
             return output.getvalue()
         
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')
-            # Auto-adjust columns' width
+            
+            # Auto-adjust columns' width and make ArticleLink clickable
             worksheet = writer.sheets['Sheet1']
             for i, col in enumerate(df.columns):
+                # Set column width
                 column_width = max(df[col].astype(str).map(len).max(), len(col))
-                worksheet.set_column(i, i, column_width + 2)  # Add padding
+                worksheet.column_dimensions[get_column_letter(i+1)].width = column_width + 2  # Add padding
+                
+                # Make ArticleLink column clickable with hyperlinks
+                if col == 'ArticleLink':
+                    for row_idx, link in enumerate(df[col], 2):  # Start from row 2 (after header)
+                        if pd.notna(link) and link != '':
+                            cell = worksheet.cell(row=row_idx, column=i+1)
+                            cell.hyperlink = link
+                            cell.value = "PubMed Link"
+                            cell.font = Font(color="0000FF", underline="single")
         
         return output.getvalue()
     except Exception as e:
@@ -1597,6 +1650,15 @@ with st.sidebar.form("search_form"):
     disease = st.text_input("Target Disease", value="Insomnia")
     company = st.text_input("Company", value="Idorsia Pharmaceuticals US Inc")
     fda_approval_date = st.date_input("FDA Approval Date", value=datetime.date(2022, 1, 7))
+    
+    # Add flexibility for date ranges
+    st.write("##### Date Range Configuration")
+    col1, col2 = st.columns(2)
+    with col1:
+        before_years = st.number_input("Years before FDA approval", min_value=1, max_value=50, value=10)
+    with col2:
+        after_years = st.number_input("Years after FDA approval (max to current)", min_value=1, max_value=50, value=50)
+    
     include_company = st.checkbox("Include company in search query", value=False)
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
     use_improved_search = st.checkbox("Use improved search strategy", value=False, help="Include both drug name and compound in both before/after queries")
@@ -1609,12 +1671,12 @@ with st.sidebar.form("search_form"):
 # Process when form is submitted
 if submitted or st.session_state.search_submitted:
     with st.spinner("Fetching articles from PubMed..."):
-        # Convert dates
+        # Convert dates with flexible range
         fda_date = datetime.datetime.combine(fda_approval_date, datetime.datetime.min.time())
-        before_start_date = fda_date.replace(year=fda_date.year - 10)
+        before_start_date = fda_date.replace(year=fda_date.year - before_years)
         before_end_date = fda_date
         after_start_date = fda_date
-        after_end_date = datetime.datetime.today()
+        after_end_date = min(datetime.datetime.today(), fda_date.replace(year=fda_date.year + after_years))
         
         # Format dates for PubMed query
         before_start_date_str = before_start_date.strftime("%Y/%m/%d")
@@ -1680,17 +1742,14 @@ if submitted or st.session_state.search_submitted:
             before_deduped = len(verified_before) - len(final_before)
             after_deduped = len(verified_after) - len(final_after)
 
-
-            final_before, final_after = deduplicate_records(verified_before, verified_after)
-
             st.session_state.moved_to_before = moved_to_before
             st.session_state.moved_to_after = moved_to_after
             st.session_state.deduped_before = before_deduped
             st.session_state.deduped_after = after_deduped
 
             # Convert to dataframes
-            df_before_raw = pd.DataFrame(final_before)  # Use final_before instead of verified_before
-            df_after_raw = pd.DataFrame(final_after)    # Use final_after instead of verified_after
+            df_before_raw = pd.DataFrame(final_before)
+            df_after_raw = pd.DataFrame(final_after)
             
             # Process and verify data
             st.subheader("Processing and Validating Data")
@@ -1998,6 +2057,8 @@ if submitted or st.session_state.search_submitted:
                 - Verified dates are within appropriate ranges
                 - Removed excess empty columns
                 - Formatted for easy analysis
+                - DOI information included in a separate column
+                - Clickable PubMed links included
                 """)
                 
                 col1, col2 = st.columns(2)
@@ -2070,7 +2131,10 @@ if submitted or st.session_state.search_submitted:
                 ### Key Features
                 
                 - **Precision Date Handling**: Uses month-level precision to accurately categorize publications
+                - **Flexible Date Ranges**: Customizable time periods before and after FDA approval
                 - **Smart Search Strategy**: Includes both brand name and compound name for comprehensive results
+                - **DOI Information**: Includes DOI for each article when available
+                - **Clickable Links**: Direct access to articles on PubMed for easy reference
                 - **Hierarchical Excel Export**: Creates beautifully formatted Excel files with authors as sub-rows
                 - **Date Verification**: Double-checks publication dates to ensure correct categorization
                 - **Visual Analysis**: Generates visualizations of publication trends, journal distributions, and content analysis
@@ -2080,14 +2144,15 @@ if submitted or st.session_state.search_submitted:
                 
                 1. Enter the drug information in the sidebar
                 2. Set the FDA approval date
-                3. Click "Search PubMed" to retrieve articles
-                4. Explore the analysis in the different tabs
-                5. Download data in standard or hierarchical Excel format
+                3. Configure the date ranges for before and after approval periods
+                4. Click "Search PubMed" to retrieve articles
+                5. Explore the analysis in the different tabs
+                6. Download data in standard or hierarchical Excel format with DOIs and clickable links
                 
                 ### About Hierarchical Excel Format
                 
                 The hierarchical Excel format organizes data with:
-                - Main rows containing article information
+                - Main rows containing article information (including DOI and clickable PubMed links)
                 - Sub-rows listing each author and their affiliation
                 - Merged cells for article details
                 - Alternating row colors for better readability
@@ -2102,6 +2167,7 @@ if submitted or st.session_state.search_submitted:
                 All publication data is retrieved from PubMed using the E-utilities API. The application processes XML responses to extract:
                 
                 - Publication metadata (title, journal, dates)
+                - DOIs and article links
                 - Author information
                 - Abstract content
                 
