@@ -1722,86 +1722,88 @@ def is_dataframe_empty(df):
     return df.empty
 
 # Sidebar configuration
-st.sidebar.markdown("### Search Configuration")
+st.sidebar.markdown("## 🔍 Search Configuration")
 
-with st.sidebar.form("search_form"):
-    drug_name = st.text_input("Drug Name", value="Quviviq")
-    composition = st.text_input("Composition/Compound", value="daridorexant")
-    disease = st.text_input("Target Disease", value="Insomnia")
-    company = st.text_input("Company", value="Idorsia Pharmaceuticals US Inc")
-    # Set a wide date range to allow for historical FDA approvals (1950-2030)
-    fda_approval_date = st.date_input(
-        "FDA Approval Date", 
-        value=datetime.date(2022, 1, 7),
-        min_value=datetime.date(1950, 1, 1),
-        max_value=datetime.date(2030, 12, 31)
-    )
-    
-    # Add flexibility for date ranges
-    st.write("##### Date Range Configuration")
-    col1, col2 = st.columns(2)
-    with col1:
-        before_years = st.number_input("Years before FDA approval", min_value=1, max_value=50, value=10)
-    with col2:
-        after_years = st.number_input("Years after FDA approval (max to current)", min_value=1, max_value=50, value=50)
-    
-    include_company = st.checkbox("Include company in search query", value=False)
-    article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
-    use_improved_search = st.checkbox("Use improved search strategy", value=False, help="Include both drug name and compound in both before/after queries")
-    
-    # add column selector
-    # Preset Profiles
-    preset_option = st.radio(
-        "Select a preset column profile:",
-        ["All Columns", "Basic Info Only", "Publication Info Only", "Custom Selection"]
-    )
+# 👉 Move Preset Profiles OUTSIDE the form
+st.sidebar.markdown("### 🗂️ Column Selection Preset")
 
-    available_columns = [
+preset_option = st.radio(
+    "Choose a preset profile:",
+    ["🗒️ All Columns", "🔍 Basic Info Only", "📚 Publication Info Only", "🛠️ Custom Selection"]
+)
+
+available_columns = [
     'PMID', 'JournalTitle', 'ArticleTitle', 'DOI', 'ArticleLink', 
     'PublicationYear', 'PublicationMonth', 'PublicationDay', 
     'PublicationDate', 'Abstract', 'MeshTerms', 'PublicationTypes', 
     'Keywords', 'ChemicalSubstances', 'GrantIDs', 'JournalISOAbbreviation', 
     'Volume', 'Issue', 'Pages', 'Country', 'Language', 
     'SubmissionYear', 'AcceptanceYear', 'EntryYear'
+]
+
+# Set the default selected columns based on preset
+if preset_option == "🗒️ All Columns":
+    selected_columns = available_columns
+elif preset_option == "🔍 Basic Info Only":
+    selected_columns = ['PMID', 'JournalTitle', 'ArticleTitle', 'DOI', 'ArticleLink']
+elif preset_option == "📚 Publication Info Only":
+    selected_columns = [
+        'PublicationYear', 'PublicationMonth', 'PublicationDay', 
+        'PublicationDate', 'Abstract', 'MeshTerms', 'PublicationTypes', 
+        'Keywords', 'ChemicalSubstances', 'GrantIDs', 'JournalISOAbbreviation', 
+        'Volume', 'Issue', 'Pages', 'Country', 'Language'
     ]
+else:
+    # 👉 Now this multiselect will update in real-time
+    selected_columns = st.multiselect(
+        "Select columns to include in download",
+        options=available_columns,
+        default=available_columns
+    )
 
-    # Set the default selected columns based on preset
-    if preset_option == "All Columns":
-        selected_columns = available_columns
-    elif preset_option == "Basic Info Only":
-        selected_columns = ['PMID', 'JournalTitle', 'ArticleTitle', 'DOI', 'ArticleLink']
-    elif preset_option == "Publication Info Only":
-        selected_columns = [
-            'PublicationYear', 'PublicationMonth', 'PublicationDay', 
-            'PublicationDate', 'Abstract', 'MeshTerms', 'PublicationTypes', 
-            'Keywords', 'ChemicalSubstances', 'GrantIDs', 'JournalISOAbbreviation', 
-            'Volume', 'Issue', 'Pages', 'Country', 'Language'
-        ]
-    else:
-        # For Custom Selection
-        selected_columns = st.multiselect(
-            "Select columns to include in download",
-            options=available_columns,
-            default=available_columns
-        )
+# Validation: Prevent empty selection
+if not selected_columns:
+    st.warning("Please select at least one column to continue.")
+    st.stop()
 
+# Save selection to session state
+st.session_state.selected_columns = selected_columns
 
-    # Validation: Prevent empty selection
-    if not selected_columns:
-        st.warning("Please select at least one column to continue.")
-        st.stop()
-
-
-    st.session_state.selected_columns = selected_columns
-
-    submitted = st.form_submit_button("Search PubMed")
+# 👉 Now the rest of the form
+with st.sidebar.form("search_form"):
+    st.sidebar.markdown("### 📥 Input Details")
+    drug_name = st.text_input("Drug Name", value="Quviviq")
+    composition = st.text_input("Composition/Compound", value="daridorexant")
+    disease = st.text_input("Target Disease", value="Insomnia")
+    company = st.text_input("Company", value="Idorsia Pharmaceuticals US Inc")
     
+    st.sidebar.markdown("### 🗓️ Date Configuration")
+    fda_approval_date = st.date_input(
+        "FDA Approval Date", 
+        value=datetime.date(2022, 1, 7),
+        min_value=datetime.date(1950, 1, 1),
+        max_value=datetime.date(2030, 12, 31)
+    )
+
+    st.write("##### Date Range Settings")
+    col1, col2 = st.columns(2)
+    with col1:
+        before_years = st.number_input("Years before FDA approval", min_value=1, max_value=50, value=10)
+    with col2:
+        after_years = st.number_input("Years after FDA approval", min_value=1, max_value=50, value=50)
+
+    with st.expander("⚙️ Advanced Options"):
+        include_company = st.checkbox("Include Company in Search", value=False)
+        article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
+        use_improved_search = st.checkbox("Enable Improved Search")
+
+    submitted = st.form_submit_button("🔍 Run PubMed Search")
+
     if submitted:
         st.session_state.search_submitted = True
 
-# 👉 Reset All Selections Button (outside the form)
-if st.sidebar.button("Reset All Selections"):
-    # Clear session state and rerun app
+# 👉 Reset Button (outside the form)
+if st.sidebar.button("♻️ Reset Selections"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.experimental_rerun()
