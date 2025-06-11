@@ -1749,7 +1749,13 @@ with st.sidebar.form("search_form"):
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
     use_improved_search = st.checkbox("Use improved search strategy", value=False, help="Include both drug name and compound in both before/after queries")
     
-    #add column selector
+    # add column selector
+    # Preset Profiles
+    preset_option = st.radio(
+        "Select a preset column profile:",
+        ["All Columns", "Basic Info Only", "Publication Info Only", "Custom Selection"]
+    )
+
     available_columns = [
     'PMID', 'JournalTitle', 'ArticleTitle', 'DOI', 'ArticleLink', 
     'PublicationYear', 'PublicationMonth', 'PublicationDay', 
@@ -1759,11 +1765,32 @@ with st.sidebar.form("search_form"):
     'SubmissionYear', 'AcceptanceYear', 'EntryYear'
     ]
 
-    selected_columns = st.multiselect(
-        "Select columns to include in download",
-        options=available_columns,
-        default=available_columns
-    )
+    # Set the default selected columns based on preset
+    if preset_option == "All Columns":
+        selected_columns = available_columns
+    elif preset_option == "Basic Info Only":
+        selected_columns = ['PMID', 'JournalTitle', 'ArticleTitle', 'DOI', 'ArticleLink']
+    elif preset_option == "Publication Info Only":
+        selected_columns = [
+            'PublicationYear', 'PublicationMonth', 'PublicationDay', 
+            'PublicationDate', 'Abstract', 'MeshTerms', 'PublicationTypes', 
+            'Keywords', 'ChemicalSubstances', 'GrantIDs', 'JournalISOAbbreviation', 
+            'Volume', 'Issue', 'Pages', 'Country', 'Language'
+        ]
+    else:
+        # For Custom Selection
+        selected_columns = st.multiselect(
+            "Select columns to include in download",
+            options=available_columns,
+            default=available_columns
+        )
+
+
+    # Validation: Prevent empty selection
+    if not selected_columns:
+        st.warning("Please select at least one column to continue.")
+        st.stop()
+
 
     st.session_state.selected_columns = selected_columns
 
@@ -1771,6 +1798,13 @@ with st.sidebar.form("search_form"):
     
     if submitted:
         st.session_state.search_submitted = True
+
+# 👉 Reset All Selections Button (outside the form)
+if st.sidebar.button("Reset All Selections"):
+    # Clear session state and rerun app
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.experimental_rerun()
 
 # Process when form is submitted
 if submitted or st.session_state.search_submitted:
