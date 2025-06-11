@@ -368,6 +368,42 @@ def process_article(article):
     if author_count == 1:  # No authors were added
         record["Author1"] = ""
         record["Affiliation1"] = ""
+
+    #new metadata extraction
+    # Extract MeSH Terms
+    mesh_terms = [mesh.text.strip() for mesh in article.findall("./MedlineCitation/MeshHeadingList/MeshHeading/DescriptorName") if mesh.text]
+    record["MeshTerms"] = "; ".join(mesh_terms)
+
+    # Extract Publication Types
+    pub_types = [ptype.text.strip() for ptype in article.findall("./MedlineCitation/Article/PublicationTypeList/PublicationType") if ptype.text]
+    record["PublicationTypes"] = "; ".join(pub_types)
+
+    # Extract Keywords
+    keywords = [kw.text.strip() for kw in article.findall("./MedlineCitation/KeywordList/Keyword") if kw.text]
+    record["Keywords"] = "; ".join(keywords)
+
+    # Extract Chemical Substances
+    chemicals = [chem.text.strip() for chem in article.findall("./MedlineCitation/ChemicalList/Chemical/NameOfSubstance") if chem.text]
+    record["ChemicalSubstances"] = "; ".join(chemicals)
+
+    # Extract Grant Information
+    grants = [grant.text.strip() for grant in article.findall("./MedlineCitation/Article/GrantList/Grant/GrantID") if grant.text]
+    record["GrantIDs"] = "; ".join(grants)
+
+    # Extract Journal Info
+    record["JournalISOAbbreviation"] = getTextFromNode(article, "./MedlineCitation/Article/Journal/ISOAbbreviation", "")
+    record["Volume"] = getTextFromNode(article, "./MedlineCitation/Article/Journal/JournalIssue/Volume", "")
+    record["Issue"] = getTextFromNode(article, "./MedlineCitation/Article/Journal/JournalIssue/Issue", "")
+    record["Pages"] = getTextFromNode(article, "./MedlineCitation/Article/Pagination/MedlinePgn", "")
+
+    # Extract Country and Language
+    record["Country"] = getTextFromNode(article, "./MedlineCitation/MedlineJournalInfo/Country", "")
+    record["Language"] = getTextFromNode(article, "./MedlineCitation/Article/Language", "")
+
+    # Extract PubMed History Dates
+    record["SubmissionYear"] = getTextFromNode(article, "./PubmedData/History/PubMedPubDate[@PubStatus='received']/Year", "")
+    record["AcceptanceYear"] = getTextFromNode(article, "./PubmedData/History/PubMedPubDate[@PubStatus='accepted']/Year", "")
+    record["EntryYear"] = getTextFromNode(article, "./PubmedData/History/PubMedPubDate[@PubStatus='entrez']/Year", "")
     
     return record
 
@@ -1713,6 +1749,24 @@ with st.sidebar.form("search_form"):
     article_limit = st.number_input("Limit articles (0 for no limit)", min_value=0, value=0)
     use_improved_search = st.checkbox("Use improved search strategy", value=False, help="Include both drug name and compound in both before/after queries")
     
+    #add column selector
+    available_columns = [
+    'PMID', 'JournalTitle', 'ArticleTitle', 'DOI', 'ArticleLink', 
+    'PublicationYear', 'PublicationMonth', 'PublicationDay', 
+    'PublicationDate', 'Abstract', 'MeshTerms', 'PublicationTypes', 
+    'Keywords', 'ChemicalSubstances', 'GrantIDs', 'JournalISOAbbreviation', 
+    'Volume', 'Issue', 'Pages', 'Country', 'Language', 
+    'SubmissionYear', 'AcceptanceYear', 'EntryYear'
+    ]
+
+    selected_columns = st.multiselect(
+        "Select columns to include in download",
+        options=available_columns,
+        default=available_columns
+    )
+
+    st.session_state.selected_columns = selected_columns
+
     submitted = st.form_submit_button("Search PubMed")
     
     if submitted:
@@ -2163,11 +2217,13 @@ if submitted or st.session_state.search_submitted:
                         if st.session_state.df_before is None or is_dataframe_empty(st.session_state.df_before):
                             st.info("No data available for download.")
                         else:
+                            filtered_df_before = st.session_state.df_before[st.session_state.selected_columns]
+                            excel_data_before = to_excel(filtered_df_before)
                             col1a, col1b = st.columns(2)
                             with col1a:
                                 download_before = st.download_button(
                                     label="Download Standard Excel",
-                                    data=st.session_state.excel_before,
+                                    data=excel_data_before,
                                     file_name=f"{drug_name}_BeforeApproval.xlsx",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                     help="Download the processed data in standard Excel format"
@@ -2190,11 +2246,13 @@ if submitted or st.session_state.search_submitted:
                         if st.session_state.df_after is None or is_dataframe_empty(st.session_state.df_after):
                             st.info("No data available for download.")
                         else:
+                            filtered_df_after = st.session_state.df_after[st.session_state.selected_columns]
+                            excel_data_after = to_excel(filtered_df_after)
                             col2a, col2b = st.columns(2)
                             with col2a:
                                 download_after = st.download_button(
                                     label="Download Standard Excel",
-                                    data=st.session_state.excel_after,
+                                    data=excel_data_after,
                                     file_name=f"{drug_name}_AfterApproval.xlsx",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                     help="Download the processed data in standard Excel format",
