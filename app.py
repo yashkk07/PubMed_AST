@@ -1660,7 +1660,7 @@ def to_excel(df):
             worksheet = writer.sheets['Sheet1']
             for i, col in enumerate(df.columns):
                 # Set column width
-                column_width = 25
+                column_width = max(df[col].astype(str).map(len).max(), len(col))
                 worksheet.column_dimensions[get_column_letter(i+1)].width = column_width + 2  # Add padding
                 
                 # Make ArticleLink column clickable with hyperlinks
