@@ -242,31 +242,20 @@ def process_article(article):
     record["JournalTitle"] = getTextFromNode(article, "./MedlineCitation/Article/Journal/Title", "")
     record["ArticleTitle"] = getTextFromNode(article, "./MedlineCitation/Article/ArticleTitle", "")
     
-    # Extract DOI
-    doi = ""
-    # Try to get DOI from first ArticleId with DOI type
-    article_ids = article.findall(".//ArticleId")
-    for article_id in article_ids:
-        if article_id.get("IdType") == "doi" and article_id.text:
-            doi = article_id.text.strip()
-            break
-    
-    # If not found, try getting DOI from ELocation element
-    if not doi:
-        elocation_ids = article.findall(".//ELocationID")
-        for eloc in elocation_ids:
-            if eloc.get("EIdType") == "doi" and eloc.text:
-                doi = eloc.text.strip()
-                break
-    
+    # Extract DOI using list comprehension
+    doi_nodes = [aid.text.strip() for aid in article.findall(".//ArticleId") if aid.get("IdType") == "doi" and aid.text]
+
+    if doi_nodes:
+        doi = doi_nodes[0]
+    else:
+        eloc_nodes = [eloc.text.strip() for eloc in article.findall(".//ELocationID") if eloc.get("EIdType") == "doi" and eloc.text]
+        doi = eloc_nodes[0] if eloc_nodes else ""
+
     record["DOI"] = doi
+
     
     # Create article link
-    pmid = record["PMID"]
-    if pmid:
-        record["ArticleLink"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-    else:
-        record["ArticleLink"] = ""
+    record["ArticleLink"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
     
     # Extract full publication date information - first try ArticleDate
     pub_year = getTextFromNode(article, "./MedlineCitation/Article/ArticleDate/Year", "")
@@ -406,6 +395,10 @@ def process_article(article):
     record["EntryYear"] = getTextFromNode(article, "./PubmedData/History/PubMedPubDate[@PubStatus='entrez']/Year", "")
     
     return record
+
+@st.cache_data(show_spinner=False)
+def fetch_cached_articles(query, batch_size=BATCH_NUM, limit=None):
+    return fetch_pubmed_articles(query, batch_size=batch_size, limit=limit)
 
 def fetch_pubmed_articles(query, batch_size=BATCH_NUM, limit=None, progress_callback=None):
     """
@@ -1658,10 +1651,10 @@ def to_excel(df):
             
             # Auto-adjust columns' width and make ArticleLink clickable
             worksheet = writer.sheets['Sheet1']
+            # Set column width
+            max_width = 15
             for i, col in enumerate(df.columns):
-                # Set column width
-                column_width = 25
-                worksheet.column_dimensions[get_column_letter(i+1)].width = column_width + 2  # Add padding
+                worksheet.column_dimensions[get_column_letter(i+1)].width = max_width  # Add padding
                 
                 # Make ArticleLink column clickable with hyperlinks
                 if col == 'ArticleLink':
@@ -1800,7 +1793,21 @@ with st.sidebar.form("search_form"):
     submitted = st.form_submit_button("🔍 Run PubMed Search")
 
     if submitted:
-        st.session_state.search_submitted = True
+        st.session_state.update({
+            'drug_name': drug_name,
+            'composition': composition,
+            'disease': disease,
+            'company': company,
+            'fda_approval_date': fda_approval_date,
+            'before_years': before_years,
+            'after_years': after_years,
+            'include_company': include_company,
+            'article_limit': article_limit,
+            'use_improved_search': use_improved_search,
+            'selected_columns': selected_columns,
+            'search_submitted': True
+        })
+
 
 # 👉 Reset Button (outside the form)
 if st.sidebar.button("♻️ Reset Selections"):
@@ -1900,7 +1907,7 @@ if submitted or st.session_state.search_submitted:
             st.write("Fetching articles for Before Approval period...")
             progress_bar_before = st.progress(0)
             limit_value = int(article_limit) if article_limit > 0 else None
-            records_before = fetch_pubmed_articles(
+            records_before = fetch_cached_articles(
                 query_before, 
                 limit=limit_value,
                 progress_callback=lambda progress: progress_bar_before.progress(progress)
@@ -1908,7 +1915,7 @@ if submitted or st.session_state.search_submitted:
             
             st.write("Fetching articles for After Approval period...")
             progress_bar_after = st.progress(0)
-            records_after = fetch_pubmed_articles(
+            records_after = fetch_cached_articles(
                 query_after, 
                 limit=limit_value,
                 progress_callback=lambda progress: progress_bar_after.progress(progress)
